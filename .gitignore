@@ -1,0 +1,11 @@
+.git/
+build/
+dist/
+GenomicTools.egg-info/
+*__pycache__/
+*.dot
+*.png
+*.pyc
+*.pyw
+*.cache/
+*~
