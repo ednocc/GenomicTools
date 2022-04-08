@@ -1,5 +1,12 @@
 # Object Oriented Genomic Package
 
+# Installation
+```
+git clone https://github.com/ednocc/GenomicTools.git
+cd GenomicTools
+python3 setup.py install
+```
+
 ## genbank
 ### Genome
 Class representing a genbank file.
