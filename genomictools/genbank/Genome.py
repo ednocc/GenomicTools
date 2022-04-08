@@ -346,11 +346,12 @@ GC%     : {self.calc_GC_content()}
     ###### Search #######
 
     def search_gene(self, gene):
-        result = OrderedDict()
+        #result = OrderedDict()
         for locustag, feature in self:
             if gene in feature.gene:
-                result[locustag] = feature
-        return PartialGenome(self.gbk, result, self.records)
+                #result[locustag] = feature
+                return feature
+        #return PartialGenome(self.gbk, result, self.records)
     
     def search_feature(self, type="CDS"):
         result = OrderedDict()
@@ -456,7 +457,7 @@ GC%     : {self.calc_GC_content()}
                         between[locustag] = feature
                     elif left <= feature.start and feature.end <= right: # feature intern to the region
                         between[locustag] = feature
-                    elif feature.start <= right and right <= feature.end:
+                    elif feature.start < right and right <= feature.end:
                         if not strict: # overlapping feature on the right border
                             right = feature.end
                         between[locustag] = feature
@@ -474,7 +475,8 @@ GC%     : {self.calc_GC_content()}
                 seqrecord_features += [feature.feature for locustag, feature in between.items()] # SeqFeature
 
             seqrecord = [SeqRecord(new_seq, 
-                                        id=f"{self.records[contig].id}_{int(left)}:{int(right)}", 
+                                        #id=f"{self.records[contig].id}_{int(left)}:{int(right)}", 
+                                        id=self.records[contig].id, 
                                         name=self.records[contig].name, 
                                         description=self.records[contig].description, 
                                         dbxrefs=self.records[contig].dbxrefs, 
@@ -506,6 +508,24 @@ GC%     : {self.calc_GC_content()}
             raise TypeError(f"'dnaA_feature' variable don't have the right type : {type(dnaA_feature)}")
         
 
+    def change_origin(self, locustag=None, gene_name=None):
+        # Find the locustag or gene_name
+        if gene_name:
+            starting_feature = self.search_gene(gene_name)
+            start = starting_feature.start
+        if locustag:
+            starting_feature = self[locustag]
+            start = starting_feature.start
+
+        seg_right = self.extract_region(start, len(self.seq[0]))
+        seg_left = self.extract_region(0, start)
+        #Debug
+        #seg_left.format("Test_left.gbk", "genbank")
+        #seg_right.format("Test_right.gbk", "genbank")
+        new_genome = seg_right + seg_left
+        return new_genome
+
+
     #def check_cached_data(self):
     #    md5hash = self.md5hasher.hash_file(self.gbk)
     #    path_cache_dir = Path(__file__).resolve().parent.joinpath(".cache")
@@ -534,6 +554,40 @@ class PartialGenome(BaseGenome):
         self.parse_seq()
         self.index = index
         self.update_keys_index()
+
+
+    def __add__(self, other):
+        if not isinstance(other, PartialGenome):
+            raise ValueError(f"other must be instance of PartialGenome, found {type(other)}")
+        if len(self.records) > 1:
+            raise ValueError(f"To concatenate two PartialGenome, there must be only one sequence (number of sequence {len(self.seq)}).")
+
+        #print(self.records[0].features[1])
+        #print(other.records[0].features[1])
+        #print(other.records[0].features[-1])
+
+        # Construct new seq
+        new_seq = self.seq[0] + other.seq[0]
+
+        # Construct new index by adding length of self.seq[0] to start of each feature from other
+        new_index = self.index.copy()
+        new_index.update({locustag: feature + len(self.seq[0]) for locustag, feature in other.index.items()})
+        seqrecord_features = [self.records[0].features[0]] # Source
+        seqrecord_features += [feature.feature for locustag, feature in new_index.items()] # SeqFeature
+        #print(seqrecord_features[1])
+
+        # Construct new seqrecord based on new_index and new_seq
+        seqrecord = [SeqRecord(new_seq, 
+                                    id=self.records[0].id, 
+                                    name=self.records[0].name, 
+                                    description=self.records[0].description, 
+                                    dbxrefs=self.records[0].dbxrefs, 
+                                    features=seqrecord_features, 
+                                    annotations=self.records[0].annotations, 
+                                    letter_annotations=self.records[0].letter_annotations)]
+
+        # Return new PartialGenome instance
+        return PartialGenome(self.gbk, new_index, seqrecord)
 
 
     def reset_origin_coordinate(self):
