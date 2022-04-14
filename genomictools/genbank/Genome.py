@@ -54,7 +54,7 @@ class BaseGenome:
         self.records = []
         self.seq = []
         self.qualifiers = OrderedDict()
-        self.other = []
+        self.other_features = []
         self.index = OrderedDict()
         self.keys_index = []
         self.strain_sep = "-"
@@ -319,29 +319,30 @@ GC%     : {self.calc_GC_content()}
             for (index, feature) in enumerate(record.features):
                 if index == 0: # bypass source
                     continue
-                self._parse_qualifiers(feature.type, feature.qualifiers)
-                if feature.type in self.major_type:
+                #self._parse_qualifiers(feature.type, feature.qualifiers)
+                self._parse_qualifiers(feature)
+                if feature.type != "gene":
                     try:
                         locustag = feature.qualifiers.get("locus_tag")[0]
                     except TypeError as e:
                         continue
                     seq = feature.extract(self.seq[contig_id])
-                    if not locustag in self.index:
-                        self.index[locustag] = Feature(feature, seq=seq, contig_id=contig_id, feature_id=index)
-                    else:
-                        print(f"Warning !\n{locustag} ({feature.type}) already in dict")
-                elif feature.type != "gene":
-                    self.other.append(feature)
-                else: # gene
-                    continue
+                    if feature.type in self.major_type:
+                        if not locustag in self.index:
+                            self.index[locustag] = Feature(feature, seq=seq, contig_id=contig_id, feature_id=index)
+                        else:
+                            print(f"Warning !\n{locustag} ({feature.type}) already in dict")
+                    else: # Other minor features
+                        self.other_features.append(Feature(feature, seq=seq, contig_id=contig_id, feature_id=index))
 
-    def _parse_qualifiers(self, feature_type, qualifiers):
-        for qualifier in qualifiers.items():
-            if feature_type in self.qualifiers.keys():
-                if qualifier[0] not in self.qualifiers[feature_type]:
-                    self.qualifiers[feature_type].append(qualifier[0])
+    #def _parse_qualifiers(self, feature_type, qualifiers):
+    def _parse_qualifiers(self, feature):
+        for qualifier in feature.qualifiers.items():
+            if feature.type in self.qualifiers.keys():
+                if qualifier[0] not in self.qualifiers[feature.type]:
+                    self.qualifiers[feature.type].append(qualifier[0])
             else:
-                self.qualifiers[feature_type] = [qualifier[0]]
+                self.qualifiers[feature.type] = [qualifier[0]]
 
     ###### Search #######
 
@@ -437,6 +438,7 @@ GC%     : {self.calc_GC_content()}
 
     def extract_region(self, left, right, contig=0, strict=True, reverse=False):
         between = OrderedDict()
+        other_features = []
         contig = self.translate_contigs_name(contig)
 
         #if contig is not None:
@@ -464,15 +466,28 @@ GC%     : {self.calc_GC_content()}
                     else:
                         continue
 
+            for feature in self.other_features:
+                if feature.contig_id == contig:
+                    if feature.start <= left <= feature.end: # overlapping feature on the left border
+                        other_features.append(feature)
+                    elif left <= feature.start and feature.end <= right: # feature intern to the region
+                        other_features.append(feature)
+                    elif feature.start < right and right <= feature.end:
+                        other_features.append(feature)
+                    else:
+                        continue
+
             seqrecord_features = [self.records[contig].features[0]] # Source
             if reverse:
                 new_seq = self.seq[contig][int(left):int(right)].reverse_complement()
                 between = {locustag: feature.lshift(int(left)).reverse_complement(len(new_seq)) for locustag, feature in zip(reversed(list(between.keys())), reversed(list(between.values())))}
-                seqrecord_features += [feature.feature for locustag, feature in between.items()] # SeqFeature
+                other_features = [feature.lshift(int(left)).reverse_complement(len(new_seq)) for feature in reversed(other_features)]
+                seqrecord_features += [feature.feature for feature in list(between.values()) + other_features] # SeqFeature
             else:
                 new_seq = self.seq[contig][int(left):int(right)]
                 between = {locustag: feature.lshift(int(left)) for locustag, feature in between.items()}
-                seqrecord_features += [feature.feature for locustag, feature in between.items()] # SeqFeature
+                other_features = [feature.lshift(int(left)) for feature in other_features]
+                seqrecord_features += [feature.feature for feature in list(between.values()) + other_features] # SeqFeature
 
             seqrecord = [SeqRecord(new_seq, 
                                         #id=f"{self.records[contig].id}_{int(left)}:{int(right)}", 
@@ -487,7 +502,7 @@ GC%     : {self.calc_GC_content()}
             raise TypeError(f"contig params must be int (contig index) or str (contigs accession). {type(contig)}.\n({e})")
         
 
-        return PartialGenome(self.gbk, between, seqrecord, left, right)
+        return PartialGenome(self.gbk, between, other_features, seqrecord, left, right)
 
     def dnaA_at_origin(self, output=""):
         if output:
@@ -545,7 +560,7 @@ GC%     : {self.calc_GC_content()}
 
 
 class PartialGenome(BaseGenome):
-    def __init__(self, genbank, index, seqrecord, left_origin=0, right_origin=0):
+    def __init__(self, genbank, index, other_features, seqrecord, left_origin=0, right_origin=0):
         super().__init__(genbank)
         self.left_origin = left_origin
         self.right_origin = right_origin
@@ -553,6 +568,7 @@ class PartialGenome(BaseGenome):
         self.source = self.records[0].features[0]
         self.parse_seq()
         self.index = index
+        self.other_features = other_features
         self.update_keys_index()
 
 
@@ -572,8 +588,9 @@ class PartialGenome(BaseGenome):
         # Construct new index by adding length of self.seq[0] to start of each feature from other
         new_index = self.index.copy()
         new_index.update({locustag: feature + len(self.seq[0]) for locustag, feature in other.index.items()})
+        new_other_features = self.other_features.copy() + other.other_features.copy()
         seqrecord_features = [self.records[0].features[0]] # Source
-        seqrecord_features += [feature.feature for locustag, feature in new_index.items()] # SeqFeature
+        seqrecord_features += [feature.feature for feature in list(new_index.values()) + new_other_features] # SeqFeature
         #print(seqrecord_features[1])
 
         # Construct new seqrecord based on new_index and new_seq
@@ -587,7 +604,7 @@ class PartialGenome(BaseGenome):
                                     letter_annotations=self.records[0].letter_annotations)]
 
         # Return new PartialGenome instance
-        return PartialGenome(self.gbk, new_index, seqrecord)
+        return PartialGenome(self.gbk, new_index, new_other_features, seqrecord)
 
 
     def reset_origin_coordinate(self):
