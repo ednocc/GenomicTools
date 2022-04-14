@@ -71,7 +71,10 @@ File    : {self.path}
         return GenomeIterator(self)
 
     def __len__(self):
-        return len(self.index.keys())
+        length = 0
+        for record in self.index.keys():
+            length += len(record.keys())
+        return length
 
     def __eq__(self, other):
         state = True
@@ -147,8 +150,8 @@ File    : {self.path}
     #def get_metadata(self):
     #    self.metadata = Metadata(self)
 
-    def update_keys_index(self):
-        self.keys_index = list(self.index.keys())
+    #def update_keys_index(self):
+    #    self.keys_index = list(self.index.keys())
         
     def show_all_qualifiers(self):
         pprint(self.qualifiers)
@@ -175,7 +178,7 @@ File    : {self.path}
 
     @property
     def species(self):
-        species = self.source.qualifiers.get("organism")[0]
+        species = self.records[0].features[0].qualifiers.get("organism")[0]
         if "subsp." in species:
             return " ".join(species.split()[:4])
         else:
@@ -185,7 +188,7 @@ File    : {self.path}
     def strain(self):
         name_fields = ["strain", "isolate"]
         for field in name_fields:
-            strain_name = self.source.qualifiers.get(field, None)
+            strain_name = self.records[0].features[0].qualifiers.get(field, None)
             if strain_name:
                 return strain_name[0].replace(" ", self.strain_sep).replace("/", self.strain_sep)
         
@@ -199,7 +202,7 @@ File    : {self.path}
         
     @property
     def dbxref(self):
-        return self.source.qualifiers.get("db_xref", "NA")[0]
+        return self.records[0].features[0].qualifiers.get("db_xref", "NA")[0]
 
     @property
     def species_code(self):
@@ -278,19 +281,29 @@ File    : {self.path}
 class GenomeIterator:
     def __init__(self, genome):
         self.genome = genome
-        self.current = 0
-        self.max = len(genome)
+        self.contig = 0
+        self.n_features_contig = 0
+        self.current_feature = 1
+        self.cursor = 0
+        self.max = len(genome) # Total number of locustag in all records
 
     def __iter__(self):
         return self
 
     def __next__(self):
-        if self.current >= self.max:
+        if self.cursor >= self.max: # End of the file - StopIteration
             raise StopIteration
-        locustag = self.genome.keys_index[self.current]
-        feature = self.genome.index[locustag]
-        self.current += 1
-        return (locustag, feature)
+        self.n_features_contig = len(genome.index[self.contig])
+        locustag = list(self.genome.index[self.contig].keys())[self.current_feature]
+        for feat_id in self.genome.index[self.contig][locustag]:
+            feature = genome.records[self.contig].features[feat_id]
+            if feature.type in genome.major_type: # Feature found - Next locustag
+                self.cursor += 1
+                self.current_feature += 1
+                if self.current_feature >= self.n_features_contig: # End of this record - Next record
+                    self.contig += 1
+                    self.current_feature = 0
+                return (locustag, feature)
 
 
 class Genome(BaseGenome):
@@ -301,8 +314,8 @@ class Genome(BaseGenome):
         #self.md5hasher = HashFile()
         #self.check_cached_data()
         self._dict_index()
-        self.update_keys_index()
-        self.source = self.records[0].features[0]
+        #self.update_keys_index()
+        #self.source = self.records[0].features[0]
 
     def __repr__(self):
         return f"""
@@ -315,34 +328,25 @@ GC%     : {self.calc_GC_content()}
     def _dict_index(self):
         for (contig_id, record) in enumerate(SeqIO.parse(self.path, "genbank")):
             self.records.append(record)
-            self.seq.append(record.seq)
-            for (index, feature) in enumerate(record.features):
-                if index == 0: # bypass source
+            self.index[contig_id] = {}
+            for (index, feature) in enumerate(record.features[1:]):
+                try:
+                    locustag = feature.qualifiers.get("locus_tag")[0]
+                except TypeError as e:
                     continue
-                #self._parse_qualifiers(feature.type, feature.qualifiers)
-                self._parse_qualifiers(feature)
-                if feature.type != "gene":
-                    try:
-                        locustag = feature.qualifiers.get("locus_tag")[0]
-                    except TypeError as e:
-                        continue
-                    seq = feature.extract(self.seq[contig_id])
-                    if feature.type in self.major_type:
-                        if not locustag in self.index:
-                            self.index[locustag] = Feature(feature, seq=seq, contig_id=contig_id, feature_id=index)
-                        else:
-                            print(f"Warning !\n{locustag} ({feature.type}) already in dict")
-                    else: # Other minor features
-                        self.other_features.append(Feature(feature, seq=seq, contig_id=contig_id, feature_id=index))
+                if not locustag in self.index[contig]:
+                    self.index[contig_id][locustag] = [index]
+                else:
+                    self.index[contig_id][locustag].append(index)
 
     #def _parse_qualifiers(self, feature_type, qualifiers):
-    def _parse_qualifiers(self, feature):
-        for qualifier in feature.qualifiers.items():
-            if feature.type in self.qualifiers.keys():
-                if qualifier[0] not in self.qualifiers[feature.type]:
-                    self.qualifiers[feature.type].append(qualifier[0])
-            else:
-                self.qualifiers[feature.type] = [qualifier[0]]
+    #def _parse_qualifiers(self, feature):
+    #    for qualifier in feature.qualifiers.items():
+    #        if feature.type in self.qualifiers.keys():
+    #            if qualifier[0] not in self.qualifiers[feature.type]:
+    #                self.qualifiers[feature.type].append(qualifier[0])
+    #        else:
+    #            self.qualifiers[feature.type] = [qualifier[0]]
 
     ###### Search #######
 
@@ -569,7 +573,7 @@ class PartialGenome(BaseGenome):
         self.parse_seq()
         self.index = index
         self.other_features = other_features
-        self.update_keys_index()
+        #self.update_keys_index()
 
 
     def __add__(self, other):
