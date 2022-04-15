@@ -72,8 +72,8 @@ File    : {self.path}
 
     def __len__(self):
         length = 0
-        for record in self.index.keys():
-            length += len(record.keys())
+        for contig_id, index in self.index.items():
+            length += len(index.keys())
         return length
 
     def __eq__(self, other):
@@ -267,12 +267,12 @@ File    : {self.path}
         # 6 --> arbitrary cutoff (plasmid in genbank of complete genome)
         # Draft genome currently have more than 6 contigs
         if len(self.records) < 7:
-            return round(GC(self.seq[0]), 2)
+            return round(GC(self.records[0].seq), 2)
         else:
             pGC = 0
             i = 0
-            for s in self.seq:
-                pGC += GC(s)
+            for r in self.records:
+                pGC += GC(r.seq)
                 i += 1
             pGC = pGC // i
             return round(pGC, 2)
@@ -281,29 +281,31 @@ File    : {self.path}
 class GenomeIterator:
     def __init__(self, genome):
         self.genome = genome
-        self.contig = 0
-        self.n_features_contig = 0
-        self.current_feature = 1
+        self.record_id = 0
+        self.n_features_record = 0
+        self.current_locus = 0
         self.cursor = 0
         self.max = len(genome) # Total number of locustag in all records
 
     def __iter__(self):
         return self
 
+    #d = {0: {"L1": [1, 2], "L2": [3, 4, 5]}, 1: {"L3": [1, 2], "L4": [3, 4, 5]}}
     def __next__(self):
         if self.cursor >= self.max: # End of the file - StopIteration
             raise StopIteration
-        self.n_features_contig = len(genome.index[self.contig])
-        locustag = list(self.genome.index[self.contig].keys())[self.current_feature]
-        for feat_id in self.genome.index[self.contig][locustag]:
-            feature = genome.records[self.contig].features[feat_id]
-            if feature.type in genome.major_type: # Feature found - Next locustag
+        self.n_features_record = len(self.genome.index[self.record_id])
+        locustag = list(self.genome.index[self.record_id].keys())[self.current_locus]
+        for feat_id in self.genome.index[self.record_id][locustag]:
+            feature = self.genome.records[self.record_id].features[feat_id]
+            if feature.type in self.genome.major_type: # Feature found - Next locustag
+                record_id = self.record_id
                 self.cursor += 1
-                self.current_feature += 1
-                if self.current_feature >= self.n_features_contig: # End of this record - Next record
-                    self.contig += 1
-                    self.current_feature = 0
-                return (locustag, feature)
+                self.current_locus += 1
+                if self.current_locus >= self.n_features_record: # End of this record - Next record
+                    self.record_id += 1
+                    self.current_locus = 0
+                return (record_id, locustag, feature)
 
 
 class Genome(BaseGenome):
@@ -326,18 +328,18 @@ GC%     : {self.calc_GC_content()}
 """
 
     def _dict_index(self):
-        for (contig_id, record) in enumerate(SeqIO.parse(self.path, "genbank")):
+        for (record_id, record) in enumerate(SeqIO.parse(self.path, "genbank")):
             self.records.append(record)
-            self.index[contig_id] = {}
-            for (index, feature) in enumerate(record.features[1:]):
+            self.index[record_id] = {}
+            for (index, feature) in enumerate(record.features[1:], 1):
                 try:
                     locustag = feature.qualifiers.get("locus_tag")[0]
                 except TypeError as e:
                     continue
-                if not locustag in self.index[contig]:
-                    self.index[contig_id][locustag] = [index]
+                if not locustag in self.index[record_id]:
+                    self.index[record_id][locustag] = [index]
                 else:
-                    self.index[contig_id][locustag].append(index)
+                    self.index[record_id][locustag].append(index)
 
     #def _parse_qualifiers(self, feature_type, qualifiers):
     #def _parse_qualifiers(self, feature):
@@ -352,8 +354,8 @@ GC%     : {self.calc_GC_content()}
 
     def search_gene(self, gene):
         #result = OrderedDict()
-        for locustag, feature in self:
-            if gene in feature.gene:
+        for contig_id, locustag, feature in self:
+            if gene in feature.qualifiers.get(gene, [""])[0]:
                 #result[locustag] = feature
                 return feature
         #return PartialGenome(self.gbk, result, self.records)
@@ -361,29 +363,30 @@ GC%     : {self.calc_GC_content()}
     def search_feature(self, type="CDS"):
         result = OrderedDict()
         if type in self.major_type:
-            for locustag, feature in self:
+            for contig_id, locustag, feature in self:
                 if feature.type == type:
                     result[locustag] = feature
         return PartialGenome(self.gbk, result, self.records)
 
     def search_product(self, product, regex=False):
         result = OrderedDict()
-        for locustag, feature in self:
+        for contig_id, locustag, feature in self:
             if regex:
-                s = re.search(product, feature.product)
+                s = re.search(product, feature.qualifiers.get("product", [""])[0])
                 if s:
                     result[locustag] = feature
             else:
-                if product in feature.product:
+                if product in feature.qualifiers.get("product", [""])[0]:
                     result[locustag] = feature
-        return PartialGenome(self.gbk, result, self.records)
+        return result
+        #return PartialGenome(self.gbk, result, self.records)
     
 
     def search_position(self, pos, contig=0):
         contig = self.translate_contigs_name(contig)
 
         try:
-            for locustag, feature in self:
+            for contig_id, locustag, feature in self:
                 if feature.contig_id == contig:
                     if pos in feature:
                         # If feature len is the same as contig len so this is probably an error
@@ -405,7 +408,7 @@ GC%     : {self.calc_GC_content()}
         #contig = self.translate_contigs_name(contig)
 
         try:
-            for locustag, feature in self:
+            for contig_id, locustag, feature in self:
                 if feature.start < start:
                     before.append((locustag, feature))
                 if feature.start > end:
@@ -447,7 +450,7 @@ GC%     : {self.calc_GC_content()}
 
         #if contig is not None:
         try:
-            for locustag, feature in self:
+            for contig_id, locustag, feature in self:
                 if feature.contig_id == contig:
                     #if feature.strand == 1:
                     #    start = feature.start
