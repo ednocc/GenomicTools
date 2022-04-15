@@ -52,100 +52,139 @@ class BaseGenome:
         self.name = "_".join(self.gbk.strip(self.extension).split("_")[:3])
         self.major_type = ["CDS", "tRNA", "rRNA", "ncRNA", "tmRNA"]
         self.records = []
-        self.seq = []
-        self.qualifiers = OrderedDict()
-        self.other_features = []
-        self.index = OrderedDict()
-        self.keys_index = []
+        self.index = {}
         self.strain_sep = "-"
+
+    def _dict_index(self):
+        append_records = True
+        if self.records: # Not empty
+            seqrecords = self.records
+            append_records = False
+        else: # Empty
+            seqrecords = self.parse_records()
+
+        for (record_id, record) in enumerate(seqrecords):
+            if append_records:
+                self.records.append(record)
+            self.index[record_id] = {}
+            for (index, feature) in enumerate(record.features[1:], 1):
+                try:
+                    locustag = feature.qualifiers.get("locus_tag")[0]
+                except TypeError as e:
+                    continue
+                if not locustag in self.index[record_id]:
+                    self.index[record_id][locustag] = [index]
+                else:
+                    self.index[record_id][locustag].append(index)
 
     def __str__(self):
         return self.__repr__()
 
     def __repr__(self):
-        return f"""
-File    : {self.path}
-"""
+        return f"{self.__class__.__name__}(path={self.path})"
 
     def __iter__(self):
         return GenomeIterator(self)
 
     def __len__(self):
         length = 0
-        for contig_id, index in self.index.items():
+        for record_id, index in self.index.items():
             length += len(index.keys())
         return length
 
     def __eq__(self, other):
-        state = True
-        if self.index != other.index:
-            state = False
-        return state
+        return self.index == other.index
 
     def __bool__(self):
         return True if self.index else False
+
+    def access_locustag(self, locustag):
+        for record_id in self.index:
+            if self.index[record_id].get(locustag, False):
+                for feat_id in self.index[record_id][locustag]:
+                    seqfeature = self.records[record_id].features[feat_id]
+                    if seqfeature.type in self.major_type:
+                        return Feature(seqfeature, seqfeature.extract(self.records[record_id].seq), record_id, feat_id)
+
+    def access_feature_id(self, record_id, feat_id):
+        seqfeature = self.records[record_id].features[feat_id]
+        return Feature(seqfeature, seqfeature.extract(self.records[record_id].seq), record_id, feat_id)
+
+    def access_position(self, left, right, record_id=0, strict=True, reverse=False):
+        selected_feature_id = []
+        for locustag, feature in self:
+            if feature.record_id == record_id:
+                if feature.start <= left <= feature.end: # overlapping feature on the left border
+                    if not strict:
+                        left = feature.start
+                    selected_feature_id.append(feature.feat_id)
+                elif left <= feature.start and feature.end <= right: # feature intern to the region
+                    selected_feature_id.append(feature.feat_id)
+                elif feature.start < right and right <= feature.end:
+                    if not strict: # overlapping feature on the right border
+                        right = feature.end
+                    selected_feature_id.append(feature.feat_id)
+                else:
+                    continue
+
+        seqrecord_features = [self.records[record_id].features[0]]
+        if reverse:
+            new_seq = self.records[record_id].seq[int(left):int(right)].reverse_complement()
+            seqrecord_features += [self.access_feature_id(record_id, feat_id).lshift(left).reverse_complement(len(new_seq)).feature for feat_id in range(selected_feature_id[-1], selected_feature_id[0] - 1, -1)]
+        else:
+            new_seq = self.records[record_id].seq[int(left):int(right)]
+            seqrecord_features += [self.access_feature_id(record_id, feat_id).lshift(left).feature for feat_id in range(selected_feature_id[0], selected_feature_id[-1] + 1)]
+
+        return new_seq, seqrecord_features
+
 
     def __getitem__(self, key):
         if not self:
             return None
 
-        if isinstance(key, slice):
-            try:
-                if self[key.start].contig_id != self[key.stop].contig_id:
-                    return None
-                else:
-                    contig = self[key.start].contig_id
+        if isinstance(key, str): # Single locustag
+            return self.access_locustag(key)
+        elif isinstance(key, slice) and isinstance(key.start, str) and isinstance(key.stop, str): # From locustag to locustag
+            feat1 = self.access_locustag(key.start)
+            if not feat1:
+                raise KeyError(f"{key.start} not in genome.")
 
-                if self.keys_index.index(key.start) > self.keys_index.index(key.stop):
-                    start = key.stop
-                    stop = key.start
-                else:
-                    start = key.start
-                    stop = key.stop
-            except ValueError as e:
-                print(f"KeyError : {e}")
+            feat2 = self.access_locustag(key.stop)
+            if not feat2:
+                raise KeyError(f"{key.stop} not in genome.")
 
+            if feat1.record_id != feat2.record_id:
+                raise KeyError(f"Passed keys are not on the same sequence. Start: {feat1.locustag} {feat1.record_id}. Stop : {feat2.locustag} {feat2.record_id}")
+            else:
+                record_id = feat1.record_id
 
-            between = OrderedDict()
-            save = False
-            for locustag, feature in self.index.items():
-                if locustag == start:
-                    save = True
-                    left_origin = feature.start
-                if save:
-                    if locustag == stop:
-                        save = False
-                        right_origin = feature.end
-                    between[locustag] = feature
+            if feat1 > feat2:
+                feat1, feat2 = feat2, feat1
 
-            seqrecord_features = [self.records[contig].features[0]] # Source
-            seqrecord_features += [v.lshift(left_origin).feature for k, v in between.items()] # SeqFeature
-            seqrecord = [SeqRecord(self.seq[contig][int(left_origin):int(right_origin)], 
-                                        id=self.records[contig].id, 
-                                        name=self.records[contig].name, 
-                                        description=self.records[contig].description, 
-                                        dbxrefs=self.records[contig].dbxrefs, 
-                                        features=seqrecord_features, 
-                                        annotations=self.records[contig].annotations, 
-                                        letter_annotations=self.records[contig].letter_annotations)]
+            seq, seqrecord_features = self.access_position(feat1.start, feat2.end, record_id)
+            seqrecord = self.get_region_seqrecord(seq, record_id, seqrecord_features)
 
-            return PartialGenome(self.gbk, between, seqrecord, left_origin, right_origin)
-        else:
-            if isinstance(key, int):
-                try:
-                    key = self.keys_index[key]
-                except:
-                    return None
-
-            return self.index.get(key, None)
+            return PartialGenome(self.gbk, seqrecord, feat1.start, feat2.end)
             
+    def get_region_seqrecord(self, seq, record_id, seqfeatures):
+        seqrecord = [SeqRecord(seq, 
+                               id=self.records[record_id].id, 
+                               name=self.records[record_id].name, 
+                               description=self.records[record_id].description, 
+                               dbxrefs=self.records[record_id].dbxrefs, 
+                               features=seqfeatures, 
+                               annotations=self.records[record_id].annotations, 
+                               letter_annotations=self.records[record_id].letter_annotations)]
+        return seqrecord
+
     def parse_records(self):
         for record in SeqIO.parse(self.path, "genbank"):
-            self.records.append(record)
+            #self.records.append(record)
+            yield record
 
-    def parse_seq(self):
-        for record in self.records:
-            self.seq.append(record.seq)
+    #def parse_seq(self):
+    #    for record in self.records:
+    #        self.seq.append(record.seq)
 
     #def get_metadata(self):
     #    self.metadata = Metadata(self)
@@ -223,7 +262,7 @@ File    : {self.path}
         i = [0 for n in range(0, len(self.records))]
         for n in range(0, len(self.records)):
             for locustag, feature in self:
-                if feature.contig_id == n:
+                if feature.record_id == n:
                     i[n] += 1
         return i
     
@@ -231,7 +270,7 @@ File    : {self.path}
         i = [0 for n in range(0, len(self.records))]
         for n in range(0, len(self.records)):
             for locustag, feature in self:
-                if feature.contig_id == n and feature.type == 'tRNA':
+                if feature.record_id == n and feature.type == 'tRNA':
                     i[n] += 1
         return i
     
@@ -239,7 +278,7 @@ File    : {self.path}
         i = [0 for n in range(0, len(self.records))]
         for n in range(0, len(self.records)):
             for locustag, feature in self:
-                if feature.contig_id == n and feature.type == 'rRNA':
+                if feature.record_id == n and feature.type == 'rRNA':
                     i[n] += 1
         return i
     
@@ -247,9 +286,9 @@ File    : {self.path}
         i = [[0, 0] for n in range(0, len(self.records))]
         for n in range(0, len(self.records)):
             for locustag, feature in self:
-                if feature.contig_id == n and feature.type == 'CDS' and not feature.pseudo:
+                if feature.record_id == n and feature.type == 'CDS' and not feature.pseudo:
                     i[n][0] += 1
-                elif feature.contig_id == n and feature.pseudo:
+                elif feature.record_id == n and feature.pseudo:
                     i[n][1] += 1
                 else:
                     continue
@@ -259,13 +298,13 @@ File    : {self.path}
         i = [0 for n in range(0, len(self.records))]
         for n in range(0, len(self.records)):
             for locustag, feature in self:
-                if feature.contig_id == n and feature.product == "hypothetical protein":
+                if feature.record_id == n and feature.product == "hypothetical protein":
                     i[n] += 1
         return i
     
     def calc_GC_content(self):
         # 6 --> arbitrary cutoff (plasmid in genbank of complete genome)
-        # Draft genome currently have more than 6 contigs
+        # Draft genome currently have more than 6 records
         if len(self.records) < 7:
             return round(GC(self.records[0].seq), 2)
         else:
@@ -290,22 +329,20 @@ class GenomeIterator:
     def __iter__(self):
         return self
 
-    #d = {0: {"L1": [1, 2], "L2": [3, 4, 5]}, 1: {"L3": [1, 2], "L4": [3, 4, 5]}}
+    #d = 0: {"L1": [1, 2], "L2": [3, 4, 5]}, 1: {"L3": [1, 2], "L4": [3, 4, 5]}}
     def __next__(self):
         if self.cursor >= self.max: # End of the file - StopIteration
             raise StopIteration
         self.n_features_record = len(self.genome.index[self.record_id])
         locustag = list(self.genome.index[self.record_id].keys())[self.current_locus]
-        for feat_id in self.genome.index[self.record_id][locustag]:
-            feature = self.genome.records[self.record_id].features[feat_id]
-            if feature.type in self.genome.major_type: # Feature found - Next locustag
-                record_id = self.record_id
-                self.cursor += 1
-                self.current_locus += 1
-                if self.current_locus >= self.n_features_record: # End of this record - Next record
-                    self.record_id += 1
-                    self.current_locus = 0
-                return (record_id, locustag, feature)
+        feature = self.genome.access_locustag(locustag)
+        if feature:
+            self.cursor += 1
+            self.current_locus += 1
+            if self.current_locus >= self.n_features_record: # End of this record - Next record
+                self.record_id += 1
+                self.current_locus = 0
+            return (locustag, feature)
 
 
 class Genome(BaseGenome):
@@ -320,26 +357,7 @@ class Genome(BaseGenome):
         #self.source = self.records[0].features[0]
 
     def __repr__(self):
-        return f"""
-Strain  : {self.strain}
-Species : {self.species}
-File    : {self.path}
-GC%     : {self.calc_GC_content()}
-"""
-
-    def _dict_index(self):
-        for (record_id, record) in enumerate(SeqIO.parse(self.path, "genbank")):
-            self.records.append(record)
-            self.index[record_id] = {}
-            for (index, feature) in enumerate(record.features[1:], 1):
-                try:
-                    locustag = feature.qualifiers.get("locus_tag")[0]
-                except TypeError as e:
-                    continue
-                if not locustag in self.index[record_id]:
-                    self.index[record_id][locustag] = [index]
-                else:
-                    self.index[record_id][locustag].append(index)
+        return f"{self.__class__.__name__}(strain={self.strain}, species={self.species}, path={self.path}, gc={self.calc_GC_content()})"
 
     #def _parse_qualifiers(self, feature_type, qualifiers):
     #def _parse_qualifiers(self, feature):
@@ -354,8 +372,8 @@ GC%     : {self.calc_GC_content()}
 
     def search_gene(self, gene):
         #result = OrderedDict()
-        for contig_id, locustag, feature in self:
-            if gene in feature.qualifiers.get(gene, [""])[0]:
+        for locustag, feature in self:
+            if gene == feature.gene:
                 #result[locustag] = feature
                 return feature
         #return PartialGenome(self.gbk, result, self.records)
@@ -363,58 +381,60 @@ GC%     : {self.calc_GC_content()}
     def search_feature(self, type="CDS"):
         result = OrderedDict()
         if type in self.major_type:
-            for contig_id, locustag, feature in self:
+            for locustag, feature in self:
                 if feature.type == type:
-                    result[locustag] = feature
-        return PartialGenome(self.gbk, result, self.records)
-
-    def search_product(self, product, regex=False):
-        result = OrderedDict()
-        for contig_id, locustag, feature in self:
-            if regex:
-                s = re.search(product, feature.qualifiers.get("product", [""])[0])
-                if s:
-                    result[locustag] = feature
-            else:
-                if product in feature.qualifiers.get("product", [""])[0]:
                     result[locustag] = feature
         return result
         #return PartialGenome(self.gbk, result, self.records)
-    
 
-    def search_position(self, pos, contig=0):
-        contig = self.translate_contigs_name(contig)
+    def search_product(self, product, regex=False):
+        #result = OrderedDict()
+        for locustag, feature in self:
+            if regex:
+                s = re.search(product, feature.product)
+                if s:
+                    #result[locustag] = feature
+                    return feature
+            else:
+                if product in feature.product:
+                    #result[locustag] = feature
+                    return feature
+        #return result
+        #return PartialGenome(self.gbk, result, self.records)
+
+    def search_position(self, pos, record=0):
+        record = self.translate_records_name(record)
 
         try:
-            for contig_id, locustag, feature in self:
-                if feature.contig_id == contig:
+            for locustag, feature in self:
+                if feature.record_id == record:
                     if pos in feature:
-                        # If feature len is the same as contig len so this is probably an error
-                        if feature.end == len(self.records[contig]):
+                        # If feature len is the same as record len so this is probably an error
+                        if feature.end == len(self.records[record]):
                             continue
                         return (locustag, feature)
                     else:
                         if pos < feature.start:
                             return ("Intergenic", None)
-            else:
+            else: # Intergenic after the last gene
                 return ("Intergenic", None)
         except Exception as e:
-            raise ValueError(f"contig params must be int or str. {type(contig)}.\n({e})")
+            raise ValueError(f"record params must be int or str. {type(record)}.\n({e})")
 
     # TODO : manage fragmented genome
-    def extract_locustag_before_after(self, start, end, contig=0, pseudo=True):
+    def extract_locustag_before_after(self, start, end, record=0, pseudo=True):
         before = []
         after = []
-        #contig = self.translate_contigs_name(contig)
+        #record = self.translate_records_name(record)
 
         try:
-            for contig_id, locustag, feature in self:
+            for locustag, feature in self:
                 if feature.start < start:
                     before.append((locustag, feature))
                 if feature.start > end:
                     after.append((locustag, feature))
         except Exception as e:
-            raise ValueError(f"contig params must be int or str. {type(contig)}.\n({e})")
+            raise ValueError(f"record params must be int or str. {type(record)}.\n({e})")
 
         # Filtering
         if not pseudo:
@@ -424,34 +444,36 @@ GC%     : {self.calc_GC_content()}
         ret = OrderedDict([before[-1], after[0]])
         return PartialGenome(self.gbk, ret, self.records)
 
-    def extract_locustag_in_region(self, left, right, contig=0):
-        return self.extract_region(left, right, contig)
+    def extract_locustag_in_region(self, left, right, record=0):
+        return self.extract_region(left, right, record)
 
-    def extract_dna_in_region(self, left, right, contig=0):
-        contig = self.translate_contigs_name(contig)
-        return self.extract_region(left, right, contig).seq[0]
+    def extract_dna_in_region(self, left, right, record=0):
+        record = self.translate_records_name(record)
+        return self.extract_region(left, right, record).seq[0]
 
-    def translate_contigs_name(self, name):
+    def translate_records_name(self, name):
         if isinstance(name, str):
-            for contig, record in enumerate(self.records):
+            for record_id, record in enumerate(self.records):
                 if record.id == name or record.name == name:
-                    return contig
+                    return record_id
             else:
-                raise Exception(f"Contig name or id was not be found in this genome. {contig}")
-        else:
+                raise Exception(f"Record name or id was not be found in this genome. {record}")
+        elif isinstance(name, int):
             if name >= len(self.records):
-                raise ValueError("Contigs value is too high. Given: {name} Max: {len(self.records)}")
+                raise ValueError("Record value is too high. Given: {name} Max: {len(self.records)}")
             return int(name)
+        else:
+            raise ValueError(f"Record need to be of type int or str. Given: {type(name)}")
 
-    def extract_region(self, left, right, contig=0, strict=True, reverse=False):
+    def extract_region(self, left, right, record=0, strict=True, reverse=False):
         between = OrderedDict()
         other_features = []
-        contig = self.translate_contigs_name(contig)
+        record = self.translate_records_name(record)
 
-        #if contig is not None:
+        #if record is not None:
         try:
-            for contig_id, locustag, feature in self:
-                if feature.contig_id == contig:
+            for locustag, feature in self:
+                if feature.record_id == record:
                     #if feature.strand == 1:
                     #    start = feature.start
                     #    end = feature.end
@@ -474,7 +496,7 @@ GC%     : {self.calc_GC_content()}
                         continue
 
             for feature in self.other_features:
-                if feature.contig_id == contig:
+                if record_id == record:
                     if feature.start <= left <= feature.end: # overlapping feature on the left border
                         other_features.append(feature)
                     elif left <= feature.start and feature.end <= right: # feature intern to the region
@@ -484,29 +506,21 @@ GC%     : {self.calc_GC_content()}
                     else:
                         continue
 
-            seqrecord_features = [self.records[contig].features[0]] # Source
+            seqrecord_features = [self.records[record].features[0]] # Source
             if reverse:
-                new_seq = self.seq[contig][int(left):int(right)].reverse_complement()
+                new_seq = self.seq[record][int(left):int(right)].reverse_complement()
                 between = {locustag: feature.lshift(int(left)).reverse_complement(len(new_seq)) for locustag, feature in zip(reversed(list(between.keys())), reversed(list(between.values())))}
                 other_features = [feature.lshift(int(left)).reverse_complement(len(new_seq)) for feature in reversed(other_features)]
                 seqrecord_features += [feature.feature for feature in list(between.values()) + other_features] # SeqFeature
             else:
-                new_seq = self.seq[contig][int(left):int(right)]
+                new_seq = self.seq[record][int(left):int(right)]
                 between = {locustag: feature.lshift(int(left)) for locustag, feature in between.items()}
                 other_features = [feature.lshift(int(left)) for feature in other_features]
                 seqrecord_features += [feature.feature for feature in list(between.values()) + other_features] # SeqFeature
 
-            seqrecord = [SeqRecord(new_seq, 
-                                        #id=f"{self.records[contig].id}_{int(left)}:{int(right)}", 
-                                        id=self.records[contig].id, 
-                                        name=self.records[contig].name, 
-                                        description=self.records[contig].description, 
-                                        dbxrefs=self.records[contig].dbxrefs, 
-                                        features=seqrecord_features, 
-                                        annotations=self.records[contig].annotations, 
-                                        letter_annotations=self.records[contig].letter_annotations)]
+            seqrecord = self.get_region_seqrecord(new_seq, record_id, seqrecord_features)
         except Exception as e:
-            raise TypeError(f"contig params must be int (contig index) or str (contigs accession). {type(contig)}.\n({e})")
+            raise TypeError(f"record params must be int (record index) or str (records accession). {type(record)}.\n({e})")
         
 
         return PartialGenome(self.gbk, between, other_features, seqrecord, left, right)
@@ -567,15 +581,15 @@ GC%     : {self.calc_GC_content()}
 
 
 class PartialGenome(BaseGenome):
-    def __init__(self, genbank, index, other_features, seqrecord, left_origin=0, right_origin=0):
+    def __init__(self, genbank, seqrecord, left_origin=0, right_origin=0):
         super().__init__(genbank)
         self.left_origin = left_origin
         self.right_origin = right_origin
         self.records = seqrecord
-        self.source = self.records[0].features[0]
-        self.parse_seq()
-        self.index = index
-        self.other_features = other_features
+        #self.source = self.records[0].features[0]
+        #self.parse_seq()
+        self._dict_index()
+        #self.other_features = other_features
         #self.update_keys_index()
 
 

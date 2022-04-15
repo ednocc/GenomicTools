@@ -22,12 +22,12 @@ def create_feature(start, end, seq="ATGC", strand=None, type=None, qualifiers=No
     return Feature(seqfeature, seq)
 
 class Feature:
-    def __init__(self, seqfeature, seq, contig_id=0, feature_id=0):
-        self.contig_id = contig_id
-        self.feature_id = feature_id
-        self.feature = seqfeature
+    def __init__(self, seqfeature, seq, record_id, feat_id):
+        self.seqfeature = seqfeature
         self.seq = seq
-        if self.feature.qualifiers.get('pseudo', False):
+        self.record_id = record_id
+        self.feat_id = feat_id
+        if self.seqfeature.qualifiers.get('pseudo', False):
             self.pseudo = True
         else:
             self.pseudo = False
@@ -35,61 +35,46 @@ class Feature:
     ## Properties
     @property
     def type(self):
-        return self.feature.type
+        return self.seqfeature.type
 
     @property
     def strand(self):
-        return self.feature.strand
+        return self.seqfeature.strand
     
-    #@strand.setter
-    #def strand(self, value):
-    #    newFeature = self._getNewSeqFeature(self.start, self.end, value, self.type, self.qualifiers)
-    #    return Feature(newFeature, self.seq, self.contig_id, self.feature_id)
-
     @property
     def start(self):
-        return self.feature.location.start.position
+        return self.seqfeature.location.start.position
     
-    #@start.setter
-    #def start(self, value):
-    #    newFeature = self._getNewSeqFeature(value, self.end, self.strand, self.type, self.qualifiers)
-    #    return Feature(newFeature, self.seq, self.contig_id, self.feature_id)
-
     @property
     def end(self):
-        return self.feature.location.end.position
+        return self.seqfeature.location.end.position
     
-    #@end.setter
-    #def end(self, value):
-    #    newFeature = self._getNewSeqFeature(self.start, value, self.strand, self.type, self.qualifiers)
-    #    return Feature(newFeature, self.seq, self.contig_id, self.feature_id)
-
     @property
     def qualifiers(self):
-        return self.feature.qualifiers
+        return self.seqfeature.qualifiers
     
     @property
     def gene(self):
-        return self.feature.qualifiers.get('gene', ['NA'])[0]
+        return self.seqfeature.qualifiers.get('gene', ['NA'])[0]
     
     @property
     def locustag(self):
-        return self.feature.qualifiers.get('locus_tag', ['NA'])[0]
+        return self.seqfeature.qualifiers.get('locus_tag', ['NA'])[0]
 
     @property
     def product(self):
-        return self.feature.qualifiers.get("product", ['NA'])[0]
+        return self.seqfeature.qualifiers.get("product", ['NA'])[0]
 
     @property
     def protein(self):
         if self.pseudo:
             return None
         else:
-            if self.feature.qualifiers.get('translation', False):
+            if self.seqfeature.qualifiers.get('translation', False):
                 if Alphabet:
-                    return Seq(self.feature.qualifiers.get('translation')[0], Alphabet.generic_protein)
+                    return Seq(self.seqfeature.qualifiers.get('translation')[0], Alphabet.generic_protein)
                 else:
-                    return Seq(self.feature.qualifiers.get('translation')[0])
+                    return Seq(self.seqfeature.qualifiers.get('translation')[0])
             else:
                 # Cas des rRNA, tRNA, ncRNA, tmRNA...
                 return None
@@ -113,7 +98,7 @@ class Feature:
         newStart = self.start + int_value
         newEnd = self.end + int_value
         newFeature = self._getNewSeqFeature(newStart, newEnd, self.strand, self.type, self.qualifiers)
-        return Feature(newFeature, self.seq, self.contig_id, self.feature_id)
+        return Feature(newFeature, self.seq)
 
     def __radd__(self, int_value):
         return self.__add__(int_value)
@@ -122,7 +107,7 @@ class Feature:
         newStart = self.start - int_value
         newEnd = self.end - int_value
         newFeature = self._getNewSeqFeature(newStart, newEnd, self.strand, self.type, self.qualifiers)
-        return Feature(newFeature, self.seq, self.contig_id, self.feature_id)
+        return Feature(self.record, newFeature)
 
     def __rsub__(self, int_value):
         return self.__sub__(int_value)
@@ -141,7 +126,7 @@ class Feature:
         newStart = length_seq - self.end + 1
 
         newFeature = self._getNewSeqFeature(newStart, newEnd, newStrand, self.type, self.qualifiers)
-        return Feature(newFeature, self.seq.reverse_complement(), self.contig_id, self.feature_id)
+        return Feature(newFeature, self.seq.reverse_complement(), self.record_id, self.feat_id)
 
     def to_seqrecord(self, type="dna", id="", description=""):
         if not description:
@@ -160,10 +145,12 @@ class Feature:
                 return None
 
     def to_fasta(self, handler=sys.stdout, **kwargs):
+        to_close = False
         #call to_seqrecord with args and kwargs and write to handler
         try:
             getattr(handler, "write")
         except AttributeError:
+            to_close = True
             handler = open(handler, "w")
         
         record = self.to_seqrecord(**kwargs)
@@ -171,6 +158,9 @@ class Feature:
             SeqIO.write(record, handler, "fasta")
         else:
             print(f"{self.locustag} is a pseudogene")
+
+        if to_close:
+            handler.close()
 
     def __str__(self):
         return self.__repr__()
@@ -187,4 +177,25 @@ class Feature:
 
     def __len__(self):
         return len(self.seq)
+
+    def __eq__(self, other):
+        return (self.start == other.start and 
+                self.end == other.end and 
+                self.seq == other.seq and 
+                self.record_id == other.record_id)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    def __ge__(self, other):
+        return self.start >= other.start
+
+    def __gt__(self, other):
+        return self.start > other.start
+
+    def __le__(self, other):
+        return self.start <= other.start
+
+    def __lt__(self, other):
+        return self.start < other.start
 
