@@ -57,10 +57,10 @@ class BaseGenome:
 
     def _dict_index(self):
         append_records = True
-        if self.records: # Not empty
+        if self.records: # Not empty = PartialGenome
             seqrecords = self.records
             append_records = False
-        else: # Empty
+        else: # Empty = New genome
             seqrecords = self.parse_records()
 
         for (record_id, record) in enumerate(seqrecords):
@@ -98,6 +98,20 @@ class BaseGenome:
     def __bool__(self):
         return True if self.index else False
 
+    def translate_records_name(self, name):
+        if isinstance(name, str):
+            for record_id, record in enumerate(self.records):
+                if record.id == name or record.name == name:
+                    return record_id
+            else:
+                raise Exception(f"Record name or id was not be found in this genome. {record}")
+        elif isinstance(name, int):
+            if name >= len(self.records):
+                raise ValueError("Record value is too high. Given: {name} Max: {len(self.records)}")
+            return int(name)
+        else:
+            raise ValueError(f"Record need to be of type int or str. Given: {type(name)}")
+
     def access_locustag(self, locustag):
         for record_id in self.index:
             if self.index[record_id].get(locustag, False):
@@ -110,7 +124,37 @@ class BaseGenome:
         seqfeature = self.records[record_id].features[feat_id]
         return Feature(seqfeature, seqfeature.extract(self.records[record_id].seq), record_id, feat_id)
 
-    def access_position(self, left, right, record_id=0, strict=True, reverse=False):
+    def access_position(self, position, record_id=0):
+        record_id = self.translate_records_name(record_id)
+
+        try:
+            for locustag, feature in self:
+                if feature.record_id == record_id:
+                    if pos in feature:
+                        # If feature len feature is the same as record_id len so this is probably an error
+                        if len(feature) == len(self.records[record_id]):
+                            continue
+                        return feature
+                    else:
+                        if pos < feature.start:
+                            return "Intergenic"
+            else: # Intergenic after the last gene
+                return "Intergenic"
+        except Exception as e:
+            raise ValueError(f"record_id params must be int or str. {type(record_id)}.\n({e})")
+
+    def get_region_seqrecord(self, seq, record_id, seqfeatures):
+        seqrecord = [SeqRecord(seq, 
+                               id=self.records[record_id].id, 
+                               name=self.records[record_id].name, 
+                               description=self.records[record_id].description, 
+                               dbxrefs=self.records[record_id].dbxrefs, 
+                               features=seqfeatures, 
+                               annotations=self.records[record_id].annotations, 
+                               letter_annotations=self.records[record_id].letter_annotations)]
+        return seqrecord
+
+    def access_region(self, left, right, record_id=0, strict=True, reverse=False):
         selected_feature_id = []
         for locustag, feature in self:
             if feature.record_id == record_id:
@@ -130,13 +174,12 @@ class BaseGenome:
         seqrecord_features = [self.records[record_id].features[0]]
         if reverse:
             new_seq = self.records[record_id].seq[int(left):int(right)].reverse_complement()
-            seqrecord_features += [self.access_feature_id(record_id, feat_id).lshift(left).reverse_complement(len(new_seq)).feature for feat_id in range(selected_feature_id[-1], selected_feature_id[0] - 1, -1)]
+            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).reverse_complement(len(new_seq)).feature for feat_id in range(selected_feature_id[-1], selected_feature_id[0] - 1, -1)]
         else:
             new_seq = self.records[record_id].seq[int(left):int(right)]
-            seqrecord_features += [self.access_feature_id(record_id, feat_id).lshift(left).feature for feat_id in range(selected_feature_id[0], selected_feature_id[-1] + 1)]
+            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).feature for feat_id in range(selected_feature_id[0], selected_feature_id[-1] + 1)]
 
-        return new_seq, seqrecord_features
-
+        return self.get_region_seqrecord(new_seq, record_id, seqfeatures)
 
     def __getitem__(self, key):
         if not self:
@@ -144,14 +187,15 @@ class BaseGenome:
 
         if isinstance(key, str): # Single locustag
             return self.access_locustag(key)
-        elif isinstance(key, slice) and isinstance(key.start, str) and isinstance(key.stop, str): # From locustag to locustag
-            feat1 = self.access_locustag(key.start)
-            if not feat1:
-                raise KeyError(f"{key.start} not in genome.")
+        elif isinstance(key, slice)
+            if isinstance(key.start, str) and isinstance(key.stop, str): # From locustag to locustag
+                feat1 = self.access_locustag(key.start)
+                if not feat1:
+                    raise KeyError(f"{key.start} not in genome.")
 
-            feat2 = self.access_locustag(key.stop)
-            if not feat2:
-                raise KeyError(f"{key.stop} not in genome.")
+                feat2 = self.access_locustag(key.stop)
+                if not feat2:
+                    raise KeyError(f"{key.stop} not in genome.")
 
             if feat1.record_id != feat2.record_id:
                 raise KeyError(f"Passed keys are not on the same sequence. Start: {feat1.locustag} {feat1.record_id}. Stop : {feat2.locustag} {feat2.record_id}")
@@ -161,22 +205,12 @@ class BaseGenome:
             if feat1 > feat2:
                 feat1, feat2 = feat2, feat1
 
-            seq, seqrecord_features = self.access_position(feat1.start, feat2.end, record_id)
-            seqrecord = self.get_region_seqrecord(seq, record_id, seqrecord_features)
+            start, end = feat1.start, feat2.end
 
-            return PartialGenome(self.gbk, seqrecord, feat1.start, feat2.end)
+            seqrecord = self.access_region(start, end, record_id)
+
+            return PartialGenome(self.gbk, seqrecord, start, end)
             
-    def get_region_seqrecord(self, seq, record_id, seqfeatures):
-        seqrecord = [SeqRecord(seq, 
-                               id=self.records[record_id].id, 
-                               name=self.records[record_id].name, 
-                               description=self.records[record_id].description, 
-                               dbxrefs=self.records[record_id].dbxrefs, 
-                               features=seqfeatures, 
-                               annotations=self.records[record_id].annotations, 
-                               letter_annotations=self.records[record_id].letter_annotations)]
-        return seqrecord
-
     def parse_records(self):
         for record in SeqIO.parse(self.path, "genbank"):
             #self.records.append(record)
@@ -192,8 +226,8 @@ class BaseGenome:
     #def update_keys_index(self):
     #    self.keys_index = list(self.index.keys())
         
-    def show_all_qualifiers(self):
-        pprint(self.qualifiers)
+    #def show_all_qualifiers(self):
+    #    pprint(self.qualifiers)
 
     def format(self, output, fmt):
         count = SeqIO.write(self.records, output, fmt)
@@ -250,57 +284,57 @@ class BaseGenome:
     def extract_sequence_id(self):
         return [record.id for record in self.records] 
     
-    def extract_plasmid(self):
-        if len(self.records) > 1:
-            return [p.id for p in self.records[1:]]
-        elif len(self.records) > 20:
-            raise ValueError("Your genome seems to be an assembly. This method can be use only on complete genome.")
-        else:
-            return []
-    
-    def count_gene(self):
-        i = [0 for n in range(0, len(self.records))]
-        for n in range(0, len(self.records)):
-            for locustag, feature in self:
-                if feature.record_id == n:
-                    i[n] += 1
-        return i
-    
-    def count_tRNA(self):
-        i = [0 for n in range(0, len(self.records))]
-        for n in range(0, len(self.records)):
-            for locustag, feature in self:
-                if feature.record_id == n and feature.type == 'tRNA':
-                    i[n] += 1
-        return i
-    
-    def count_rRNA(self):
-        i = [0 for n in range(0, len(self.records))]
-        for n in range(0, len(self.records)):
-            for locustag, feature in self:
-                if feature.record_id == n and feature.type == 'rRNA':
-                    i[n] += 1
-        return i
-    
-    def count_coding_and_pseudo(self):
-        i = [[0, 0] for n in range(0, len(self.records))]
-        for n in range(0, len(self.records)):
-            for locustag, feature in self:
-                if feature.record_id == n and feature.type == 'CDS' and not feature.pseudo:
-                    i[n][0] += 1
-                elif feature.record_id == n and feature.pseudo:
-                    i[n][1] += 1
-                else:
-                    continue
-        return i
-    
-    def count_hypothetical(self):
-        i = [0 for n in range(0, len(self.records))]
-        for n in range(0, len(self.records)):
-            for locustag, feature in self:
-                if feature.record_id == n and feature.product == "hypothetical protein":
-                    i[n] += 1
-        return i
+    #def extract_plasmid(self):
+    #    if len(self.records) > 1:
+    #        return [p.id for p in self.records[1:]]
+    #    elif len(self.records) > 20:
+    #        raise ValueError("Your genome seems to be an assembly. This method can be use only on complete genome.")
+    #    else:
+    #        return []
+    #
+    #def count_gene(self):
+    #    i = [0 for n in range(0, len(self.records))]
+    #    for n in range(0, len(self.records)):
+    #        for locustag, feature in self:
+    #            if feature.record_id == n:
+    #                i[n] += 1
+    #    return i
+    #
+    #def count_tRNA(self):
+    #    i = [0 for n in range(0, len(self.records))]
+    #    for n in range(0, len(self.records)):
+    #        for locustag, feature in self:
+    #            if feature.record_id == n and feature.type == 'tRNA':
+    #                i[n] += 1
+    #    return i
+    #
+    #def count_rRNA(self):
+    #    i = [0 for n in range(0, len(self.records))]
+    #    for n in range(0, len(self.records)):
+    #        for locustag, feature in self:
+    #            if feature.record_id == n and feature.type == 'rRNA':
+    #                i[n] += 1
+    #    return i
+    #
+    #def count_coding_and_pseudo(self):
+    #    i = [[0, 0] for n in range(0, len(self.records))]
+    #    for n in range(0, len(self.records)):
+    #        for locustag, feature in self:
+    #            if feature.record_id == n and feature.type == 'CDS' and not feature.pseudo:
+    #                i[n][0] += 1
+    #            elif feature.record_id == n and feature.pseudo:
+    #                i[n][1] += 1
+    #            else:
+    #                continue
+    #    return i
+    #
+    #def count_hypothetical(self):
+    #    i = [0 for n in range(0, len(self.records))]
+    #    for n in range(0, len(self.records)):
+    #        for locustag, feature in self:
+    #            if feature.record_id == n and feature.product == "hypothetical protein":
+    #                i[n] += 1
+    #    return i
     
     def calc_GC_content(self):
         # 6 --> arbitrary cutoff (plasmid in genbank of complete genome)
@@ -402,27 +436,28 @@ class Genome(BaseGenome):
         #return result
         #return PartialGenome(self.gbk, result, self.records)
 
-    def search_position(self, pos, record=0):
-        record = self.translate_records_name(record)
+    #def search_position(self, pos, record_id=0):
+    #    record_id = self.translate_records_name(record_id)
 
-        try:
-            for locustag, feature in self:
-                if feature.record_id == record:
-                    if pos in feature:
-                        # If feature len is the same as record len so this is probably an error
-                        if feature.end == len(self.records[record]):
-                            continue
-                        return (locustag, feature)
-                    else:
-                        if pos < feature.start:
-                            return ("Intergenic", None)
-            else: # Intergenic after the last gene
-                return ("Intergenic", None)
-        except Exception as e:
-            raise ValueError(f"record params must be int or str. {type(record)}.\n({e})")
+    #    try:
+    #        for locustag, feature in self:
+    #            if feature.record_id == record_id:
+    #                if pos in feature:
+    #                    # If feature len feature is the same as record_id len so this is probably an error
+    #                    if len(feature) == len(self.records[record_id]):
+    #                        continue
+    #                    return (locustag, feature)
+    #                else:
+    #                    if pos < feature.start:
+    #                        return ("Intergenic", None)
+    #        else: # Intergenic after the last gene
+    #            return ("Intergenic", None)
+    #    except Exception as e:
+    #        raise ValueError(f"record_id params must be int or str. {type(record_id)}.\n({e})")
 
-    # TODO : manage fragmented genome
-    def extract_locustag_before_after(self, start, end, record=0, pseudo=True):
+    # TODO: manage fragmented genome
+    # TODO: Need to be reimplemented
+    def extract_locustag_before_after(self, start, end, record_id=0, pseudo=True):
         before = []
         after = []
         #record = self.translate_records_name(record)
@@ -434,7 +469,7 @@ class Genome(BaseGenome):
                 if feature.start > end:
                     after.append((locustag, feature))
         except Exception as e:
-            raise ValueError(f"record params must be int or str. {type(record)}.\n({e})")
+            raise ValueError(f"record_id params must be int or str. {type(record_id)}.\n({e})")
 
         # Filtering
         if not pseudo:
@@ -444,86 +479,27 @@ class Genome(BaseGenome):
         ret = OrderedDict([before[-1], after[0]])
         return PartialGenome(self.gbk, ret, self.records)
 
-    def extract_locustag_in_region(self, left, right, record=0):
-        return self.extract_region(left, right, record)
+    def extract_locustag_in_region(self, left, right, record_id=0):
+        return self.extract_region(left, right, record_id)
 
-    def extract_dna_in_region(self, left, right, record=0):
-        record = self.translate_records_name(record)
-        return self.extract_region(left, right, record).seq[0]
+    def extract_dna_in_region(self, left, right, record_id=0):
+        record_id = self.translate_records_name(record_id)
+        return self.extract_region(left, right, record_id).seq[0]
 
-    def translate_records_name(self, name):
-        if isinstance(name, str):
-            for record_id, record in enumerate(self.records):
-                if record.id == name or record.name == name:
-                    return record_id
-            else:
-                raise Exception(f"Record name or id was not be found in this genome. {record}")
-        elif isinstance(name, int):
-            if name >= len(self.records):
-                raise ValueError("Record value is too high. Given: {name} Max: {len(self.records)}")
-            return int(name)
-        else:
-            raise ValueError(f"Record need to be of type int or str. Given: {type(name)}")
-
-    def extract_region(self, left, right, record=0, strict=True, reverse=False):
+    def extract_region(self, left, right, record_id=0, strict=True, reverse=False):
         between = OrderedDict()
         other_features = []
         record = self.translate_records_name(record)
 
-        #if record is not None:
-        try:
-            for locustag, feature in self:
-                if feature.record_id == record:
-                    #if feature.strand == 1:
-                    #    start = feature.start
-                    #    end = feature.end
-                    #else:
-                    #    # Inversion du start / end pour conserver la même condition
-                    #    start = feature.end
-                    #    end = feature.start
-                    #if (start <= left and left <= end) or (left <= start and end <= right) or (start <= right and right <= end):
-                    if feature.start <= left <= feature.end: # overlapping feature on the left border
-                        if not strict:
-                            left = feature.start
-                        between[locustag] = feature
-                    elif left <= feature.start and feature.end <= right: # feature intern to the region
-                        between[locustag] = feature
-                    elif feature.start < right and right <= feature.end:
-                        if not strict: # overlapping feature on the right border
-                            right = feature.end
-                        between[locustag] = feature
-                    else:
-                        continue
-
-            for feature in self.other_features:
-                if record_id == record:
-                    if feature.start <= left <= feature.end: # overlapping feature on the left border
-                        other_features.append(feature)
-                    elif left <= feature.start and feature.end <= right: # feature intern to the region
-                        other_features.append(feature)
-                    elif feature.start < right and right <= feature.end:
-                        other_features.append(feature)
-                    else:
-                        continue
-
-            seqrecord_features = [self.records[record].features[0]] # Source
-            if reverse:
-                new_seq = self.seq[record][int(left):int(right)].reverse_complement()
-                between = {locustag: feature.lshift(int(left)).reverse_complement(len(new_seq)) for locustag, feature in zip(reversed(list(between.keys())), reversed(list(between.values())))}
-                other_features = [feature.lshift(int(left)).reverse_complement(len(new_seq)) for feature in reversed(other_features)]
-                seqrecord_features += [feature.feature for feature in list(between.values()) + other_features] # SeqFeature
-            else:
-                new_seq = self.seq[record][int(left):int(right)]
-                between = {locustag: feature.lshift(int(left)) for locustag, feature in between.items()}
-                other_features = [feature.lshift(int(left)) for feature in other_features]
-                seqrecord_features += [feature.feature for feature in list(between.values()) + other_features] # SeqFeature
+        seq, seqfeatures = self.access_region()
 
             seqrecord = self.get_region_seqrecord(new_seq, record_id, seqrecord_features)
         except Exception as e:
             raise TypeError(f"record params must be int (record index) or str (records accession). {type(record)}.\n({e})")
         
+        seqrecord = self.access_region(left, right, record_id, strict, reverse)
 
-        return PartialGenome(self.gbk, between, other_features, seqrecord, left, right)
+        return PartialGenome(self.gbk, seqrecord, left, right)
 
     def dnaA_at_origin(self, output=""):
         if output:
@@ -586,12 +562,7 @@ class PartialGenome(BaseGenome):
         self.left_origin = left_origin
         self.right_origin = right_origin
         self.records = seqrecord
-        #self.source = self.records[0].features[0]
-        #self.parse_seq()
         self._dict_index()
-        #self.other_features = other_features
-        #self.update_keys_index()
-
 
     def __add__(self, other):
         if not isinstance(other, PartialGenome):
@@ -614,18 +585,22 @@ class PartialGenome(BaseGenome):
         seqrecord_features += [feature.feature for feature in list(new_index.values()) + new_other_features] # SeqFeature
         #print(seqrecord_features[1])
 
+        # Extract seqfeature from self and other
+
+
         # Construct new seqrecord based on new_index and new_seq
-        seqrecord = [SeqRecord(new_seq, 
-                                    id=self.records[0].id, 
-                                    name=self.records[0].name, 
-                                    description=self.records[0].description, 
-                                    dbxrefs=self.records[0].dbxrefs, 
-                                    features=seqrecord_features, 
-                                    annotations=self.records[0].annotations, 
-                                    letter_annotations=self.records[0].letter_annotations)]
+        seqrecord = self.get_region_seqrecord(seq, record_id, seqfeatures)
+        #seqrecord = [SeqRecord(new_seq, 
+        #                            id=self.records[0].id, 
+        #                            name=self.records[0].name, 
+        #                            description=self.records[0].description, 
+        #                            dbxrefs=self.records[0].dbxrefs, 
+        #                            features=seqrecord_features, 
+        #                            annotations=self.records[0].annotations, 
+        #                            letter_annotations=self.records[0].letter_annotations)]
 
         # Return new PartialGenome instance
-        return PartialGenome(self.gbk, new_index, new_other_features, seqrecord)
+        return PartialGenome(self.gbk, seqrecord)
 
 
     def reset_origin_coordinate(self):
