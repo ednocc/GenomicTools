@@ -155,29 +155,32 @@ class BaseGenome:
         return seqrecord
 
     def access_region(self, left, right, record_id=0, strict=True, reverse=False):
-        selected_feature_id = []
+        selected_feature = []
         for locustag, feature in self:
             if feature.record_id == record_id:
                 if feature.start <= left <= feature.end: # overlapping feature on the left border
                     if not strict:
                         left = feature.start
-                    selected_feature_id.append(feature.feat_id)
+                    selected_feature.append(feature)
                 elif left <= feature.start and feature.end <= right: # feature intern to the region
-                    selected_feature_id.append(feature.feat_id)
+                    selected_feature.append(feature)
                 elif feature.start < right and right <= feature.end:
                     if not strict: # overlapping feature on the right border
                         right = feature.end
-                    selected_feature_id.append(feature.feat_id)
+                    selected_feature.append(feature)
                 else:
                     continue
+
+        feat1_id = self.index[record_id][selected_feature[0].locustag][0] # True first feat_id
+        feat2_id = self.index[record_id][selected_feature[-1].locustag][-1] # True last feat_id
 
         seqfeatures = [self.records[record_id].features[0]]
         if reverse:
             new_seq = self.records[record_id].seq[int(left):int(right)].reverse_complement()
-            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).reverse_complement(len(new_seq)).seqfeature for feat_id in range(selected_feature_id[-1], selected_feature_id[0] - 1, -1)]
+            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).reverse_complement(len(new_seq)).seqfeature for feat_id in range(feat2_id, feat1_id - 1, -1)]
         else:
             new_seq = self.records[record_id].seq[int(left):int(right)]
-            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).seqfeature for feat_id in range(selected_feature_id[0], selected_feature_id[-1] + 1)]
+            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).seqfeature for feat_id in range(feat1_id, feat2_id + 1)]
 
         return self.get_region_seqrecord(new_seq, record_id, seqfeatures)
 
@@ -579,7 +582,7 @@ class PartialGenome(BaseGenome):
 
         # Extract seqfeature from self and other
         seqfeatures = self.records[0].features 
-        seqfeatures += [(other.access_feature_id(0, i) + len(self.records[0].seq)).seqfeature for i in range(len(other.records[0].features[1:]))]
+        seqfeatures += [(other.access_feature_id(0, i) + len(self.records[0].seq)).seqfeature for i in range(1, len(other.records[0].features[1:]) + 1)]
 
         # Construct new seqrecord based on new_index and new_seq
         seqrecord = self.get_region_seqrecord(seq, 0, seqfeatures)
