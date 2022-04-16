@@ -98,7 +98,7 @@ class Feature:
         newStart = self.start + int_value
         newEnd = self.end + int_value
         newFeature = self._getNewSeqFeature(newStart, newEnd, self.strand, self.type, self.qualifiers)
-        return Feature(newFeature, self.seq)
+        return Feature(newFeature, self.seq, self.record_id, self.feat_id)
 
     def __radd__(self, int_value):
         return self.__add__(int_value)
@@ -107,7 +107,7 @@ class Feature:
         newStart = self.start - int_value
         newEnd = self.end - int_value
         newFeature = self._getNewSeqFeature(newStart, newEnd, self.strand, self.type, self.qualifiers)
-        return Feature(self.record, newFeature)
+        return Feature(newFeature, self.seq, self.record_id, self.feat_id)
 
     def __rsub__(self, int_value):
         return self.__sub__(int_value)

@@ -130,13 +130,13 @@ class BaseGenome:
         try:
             for locustag, feature in self:
                 if feature.record_id == record_id:
-                    if pos in feature:
+                    if position in feature:
                         # If feature len feature is the same as record_id len so this is probably an error
                         if len(feature) == len(self.records[record_id]):
                             continue
                         return feature
                     else:
-                        if pos < feature.start:
+                        if position < feature.start:
                             return "Intergenic"
             else: # Intergenic after the last gene
                 return "Intergenic"
@@ -171,13 +171,13 @@ class BaseGenome:
                 else:
                     continue
 
-        seqrecord_features = [self.records[record_id].features[0]]
+        seqfeatures = [self.records[record_id].features[0]]
         if reverse:
             new_seq = self.records[record_id].seq[int(left):int(right)].reverse_complement()
-            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).reverse_complement(len(new_seq)).feature for feat_id in range(selected_feature_id[-1], selected_feature_id[0] - 1, -1)]
+            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).reverse_complement(len(new_seq)).seqfeature for feat_id in range(selected_feature_id[-1], selected_feature_id[0] - 1, -1)]
         else:
             new_seq = self.records[record_id].seq[int(left):int(right)]
-            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).feature for feat_id in range(selected_feature_id[0], selected_feature_id[-1] + 1)]
+            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).seqfeature for feat_id in range(selected_feature_id[0], selected_feature_id[-1] + 1)]
 
         return self.get_region_seqrecord(new_seq, record_id, seqfeatures)
 
@@ -187,7 +187,7 @@ class BaseGenome:
 
         if isinstance(key, str): # Single locustag
             return self.access_locustag(key)
-        elif isinstance(key, slice)
+        elif isinstance(key, slice):
             if isinstance(key.start, str) and isinstance(key.stop, str): # From locustag to locustag
                 feat1 = self.access_locustag(key.start)
                 if not feat1:
@@ -486,17 +486,9 @@ class Genome(BaseGenome):
         record_id = self.translate_records_name(record_id)
         return self.extract_region(left, right, record_id).seq[0]
 
+    # Alias of access_region - For compatibility
     def extract_region(self, left, right, record_id=0, strict=True, reverse=False):
-        between = OrderedDict()
-        other_features = []
-        record = self.translate_records_name(record)
-
-        seq, seqfeatures = self.access_region()
-
-            seqrecord = self.get_region_seqrecord(new_seq, record_id, seqrecord_features)
-        except Exception as e:
-            raise TypeError(f"record params must be int (record index) or str (records accession). {type(record)}.\n({e})")
-        
+        record_id = self.translate_records_name(record_id)
         seqrecord = self.access_region(left, right, record_id, strict, reverse)
 
         return PartialGenome(self.gbk, seqrecord, left, right)
@@ -575,21 +567,22 @@ class PartialGenome(BaseGenome):
         #print(other.records[0].features[-1])
 
         # Construct new seq
-        new_seq = self.seq[0] + other.seq[0]
+        seq = self.records[0].seq + other.records[0].seq
 
         # Construct new index by adding length of self.seq[0] to start of each feature from other
-        new_index = self.index.copy()
-        new_index.update({locustag: feature + len(self.seq[0]) for locustag, feature in other.index.items()})
-        new_other_features = self.other_features.copy() + other.other_features.copy()
-        seqrecord_features = [self.records[0].features[0]] # Source
-        seqrecord_features += [feature.feature for feature in list(new_index.values()) + new_other_features] # SeqFeature
+        #new_index = self.index.copy()
+        #new_index.update({locustag: feature + len(self.seq[0]) for locustag, feature in other.index.items()})
+        #new_other_features = self.other_features.copy() + other.other_features.copy()
+        #seqrecord_features = [self.records[0].features[0]] # Source
+        #seqrecord_features += [feature.seqfeature for feature in list(new_index.values()) + new_other_features] # SeqFeature
         #print(seqrecord_features[1])
 
         # Extract seqfeature from self and other
-
+        seqfeatures = self.records[0].features 
+        seqfeatures += [(other.access_feature_id(0, i) + len(self.records[0].seq)).seqfeature for i in range(len(other.records[0].features[1:]))]
 
         # Construct new seqrecord based on new_index and new_seq
-        seqrecord = self.get_region_seqrecord(seq, record_id, seqfeatures)
+        seqrecord = self.get_region_seqrecord(seq, 0, seqfeatures)
         #seqrecord = [SeqRecord(new_seq, 
         #                            id=self.records[0].id, 
         #                            name=self.records[0].name, 
