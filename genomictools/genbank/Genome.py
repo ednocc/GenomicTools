@@ -112,6 +112,13 @@ class BaseGenome:
         else:
             raise ValueError(f"Record need to be of type int or str. Given: {type(name)}")
 
+    # Iter throught the underlying data structure
+    def iterfeatures(self, record_id):
+        record_id = self.translate_records_name(record_id)
+        # Skip source feature
+        for feat_id, seqfeature in enumerate(self.records[record_id].features[1:], 1):
+            yield Feature(seqfeature, seqfeature.extract(self.records[record_id].seq), record_id, feat_id)
+
     def access_locustag(self, locustag):
         for record_id in self.index:
             if self.index[record_id].get(locustag, False):
@@ -121,6 +128,7 @@ class BaseGenome:
                         return Feature(seqfeature, seqfeature.extract(self.records[record_id].seq), record_id, feat_id)
 
     def access_feature_id(self, record_id, feat_id):
+        record_id = self.translate_records_name(record_id)
         seqfeature = self.records[record_id].features[feat_id]
         return Feature(seqfeature, seqfeature.extract(self.records[record_id].seq), record_id, feat_id)
 
@@ -155,32 +163,30 @@ class BaseGenome:
         return seqrecord
 
     def access_region(self, left, right, record_id=0, strict=True, reverse=False):
-        selected_feature = []
-        for locustag, feature in self:
-            if feature.record_id == record_id:
-                if feature.start <= left <= feature.end: # overlapping feature on the left border
-                    if not strict:
-                        left = feature.start
-                    selected_feature.append(feature)
-                elif left <= feature.start and feature.end <= right: # feature intern to the region
-                    selected_feature.append(feature)
-                elif feature.start < right and right <= feature.end:
-                    if not strict: # overlapping feature on the right border
-                        right = feature.end
-                    selected_feature.append(feature)
-                else:
-                    continue
+        record_id = self.translate_records_name(record_id)
+        selected_features = []
+        for feature in self.iterfeatures(record_id):
+            if feature.start <= left <= feature.end: # overlapping feature on the left border
+                if not strict:
+                    left = feature.start
+                selected_features.append(feature)
+            elif left <= feature.start and feature.end <= right: # feature intern to the region
+                selected_features.append(feature)
+            elif feature.start < right and right <= feature.end:
+                if not strict: # overlapping feature on the right border
+                    right = feature.end
+                selected_features.append(feature)
+            else:
+                continue
 
-        feat1_id = self.index[record_id][selected_feature[0].locustag][0] # True first feat_id
-        feat2_id = self.index[record_id][selected_feature[-1].locustag][-1] # True last feat_id
-
+        # Add source feature
         seqfeatures = [self.records[record_id].features[0]]
         if reverse:
             new_seq = self.records[record_id].seq[int(left):int(right)].reverse_complement()
-            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).reverse_complement(len(new_seq)).seqfeature for feat_id in range(feat2_id, feat1_id - 1, -1)]
+            seqfeatures += [feat.lshift(left).reverse_complement(len(new_seq)).seqfeature for feat in selected_features]
         else:
             new_seq = self.records[record_id].seq[int(left):int(right)]
-            seqfeatures += [self.access_feature_id(record_id, feat_id).lshift(left).seqfeature for feat_id in range(feat1_id, feat2_id + 1)]
+            seqfeatures += [feat.lshift(left).seqfeature for feat in selected_features]
 
         return self.get_region_seqrecord(new_seq, record_id, seqfeatures)
 
@@ -200,16 +206,20 @@ class BaseGenome:
                 if not feat2:
                     raise KeyError(f"{key.stop} not in genome.")
 
-            if feat1.record_id != feat2.record_id:
-                raise KeyError(f"Passed keys are not on the same sequence. Start: {feat1.locustag} {feat1.record_id}. Stop : {feat2.locustag} {feat2.record_id}")
-            else:
-                record_id = feat1.record_id
+                if feat1.record_id != feat2.record_id:
+                    raise KeyError(f"Passed keys are not on the same sequence. Start: {feat1.locustag} {feat1.record_id}. Stop : {feat2.locustag} {feat2.record_id}")
+                else:
+                    record_id = feat1.record_id
 
-            if feat1 > feat2:
-                feat1, feat2 = feat2, feat1
+                start, end = feat1.start, feat2.end
 
-            start, end = feat1.start, feat2.end
+            elif isinstance(key.start, int) and isinstance(key.stop, tuple):
+                record_id = key.start
+                if isinstance(key.stop[0], int) and isinstance(key.stop[1], int):
+                    start, end = key.stop
 
+            if start > end:
+                start, end = end, stop
             seqrecord = self.access_region(start, end, record_id)
 
             return PartialGenome(self.gbk, seqrecord, start, end)
@@ -218,19 +228,6 @@ class BaseGenome:
         for record in SeqIO.parse(self.path, "genbank"):
             #self.records.append(record)
             yield record
-
-    #def parse_seq(self):
-    #    for record in self.records:
-    #        self.seq.append(record.seq)
-
-    #def get_metadata(self):
-    #    self.metadata = Metadata(self)
-
-    #def update_keys_index(self):
-    #    self.keys_index = list(self.index.keys())
-        
-    #def show_all_qualifiers(self):
-    #    pprint(self.qualifiers)
 
     def format(self, output, fmt):
         count = SeqIO.write(self.records, output, fmt)
@@ -386,34 +383,17 @@ class Genome(BaseGenome):
     #@timer
     def __init__(self, genbank):
         super().__init__(genbank)
-        #self.cached = False
-        #self.md5hasher = HashFile()
-        #self.check_cached_data()
         self._dict_index()
-        #self.update_keys_index()
-        #self.source = self.records[0].features[0]
 
     def __repr__(self):
         return f"{self.__class__.__name__}(strain={self.strain}, species={self.species}, path={self.path}, gc={self.calc_GC_content()})"
 
-    #def _parse_qualifiers(self, feature_type, qualifiers):
-    #def _parse_qualifiers(self, feature):
-    #    for qualifier in feature.qualifiers.items():
-    #        if feature.type in self.qualifiers.keys():
-    #            if qualifier[0] not in self.qualifiers[feature.type]:
-    #                self.qualifiers[feature.type].append(qualifier[0])
-    #        else:
-    #            self.qualifiers[feature.type] = [qualifier[0]]
-
     ###### Search #######
 
     def search_gene(self, gene):
-        #result = OrderedDict()
         for locustag, feature in self:
             if gene == feature.gene:
-                #result[locustag] = feature
                 return feature
-        #return PartialGenome(self.gbk, result, self.records)
     
     def search_feature(self, type="CDS"):
         result = OrderedDict()
@@ -422,41 +402,16 @@ class Genome(BaseGenome):
                 if feature.type == type:
                     result[locustag] = feature
         return result
-        #return PartialGenome(self.gbk, result, self.records)
 
     def search_product(self, product, regex=False):
-        #result = OrderedDict()
         for locustag, feature in self:
             if regex:
                 s = re.search(product, feature.product)
                 if s:
-                    #result[locustag] = feature
                     return feature
             else:
                 if product in feature.product:
-                    #result[locustag] = feature
                     return feature
-        #return result
-        #return PartialGenome(self.gbk, result, self.records)
-
-    #def search_position(self, pos, record_id=0):
-    #    record_id = self.translate_records_name(record_id)
-
-    #    try:
-    #        for locustag, feature in self:
-    #            if feature.record_id == record_id:
-    #                if pos in feature:
-    #                    # If feature len feature is the same as record_id len so this is probably an error
-    #                    if len(feature) == len(self.records[record_id]):
-    #                        continue
-    #                    return (locustag, feature)
-    #                else:
-    #                    if pos < feature.start:
-    #                        return ("Intergenic", None)
-    #        else: # Intergenic after the last gene
-    #            return ("Intergenic", None)
-    #    except Exception as e:
-    #        raise ValueError(f"record_id params must be int or str. {type(record_id)}.\n({e})")
 
     # TODO: manage fragmented genome
     # TODO: Need to be reimplemented
@@ -491,9 +446,7 @@ class Genome(BaseGenome):
 
     # Alias of access_region - For compatibility
     def extract_region(self, left, right, record_id=0, strict=True, reverse=False):
-        record_id = self.translate_records_name(record_id)
         seqrecord = self.access_region(left, right, record_id, strict, reverse)
-
         return PartialGenome(self.gbk, seqrecord, left, right)
 
     def dnaA_at_origin(self, output=""):
