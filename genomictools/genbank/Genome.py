@@ -40,17 +40,45 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 FORWARD_STRAND = 1
 REVERSE_STRAND = -1
 
-__all__ = ["FORWARD_STRAND", "REVERSE_STRAND", "Genome", "PartialGenome", "process_multiple_genome", "parallel_genomes", "sequential_genomes"]
+__all__ = ["FORWARD_STRAND", "REVERSE_STRAND", "Genome", "process_multiple_genome", "parallel_genomes", "sequential_genomes"]
 
 
-class BaseGenome:
+class GenomeIterator:
+    def __init__(self, genome):
+        self.genome = genome
+        self.record_id = 0
+        self.n_features_record = 0
+        self.current_locus = 0
+        self.cursor = 0
+        self.max = len(genome) # Total number of locustag in all records
+
+    def __iter__(self):
+        return self
+
+    #d = 0: {"L1": [1, 2], "L2": [3, 4, 5]}, 1: {"L3": [1, 2], "L4": [3, 4, 5]}}
+    def __next__(self):
+        if self.cursor >= self.max: # End of the file - StopIteration
+            raise StopIteration
+        self.n_features_record = len(self.genome.index[self.record_id])
+        locustag = list(self.genome.index[self.record_id].keys())[self.current_locus]
+        feature = self.genome.access_locustag(locustag)
+        if feature:
+            self.cursor += 1
+            self.current_locus += 1
+            if self.current_locus >= self.n_features_record: # End of this record - Next record
+                self.record_id += 1
+                self.current_locus = 0
+            return (locustag, feature)
+
+
+class Genome:
     # Prevents the direct use of this class 
-    def __new__(cls):
-        if BaseGenome.__name__ == cls.__name__:
-            raise ValueError("You try to create an instance of the BaseGenome class which is not recommanded. Use the Genome class instead.")
-        return super().__new__(cls)
+    #def __new__(cls):
+    #    if BaseGenome.__name__ == cls.__name__:
+    #        raise ValueError("You try to create an instance of the BaseGenome class which is not recommanded. Use the Genome class instead.")
+    #    return super().__new__(cls)
 
-    def __init__(self, genbank):
+    def __init__(self, genbank, seqrecord=None, left_origin=0, right_origin=0):
         self.gbk = os.path.basename(genbank)
         self.path = os.path.realpath(genbank)
         self.fasta = None
@@ -60,12 +88,18 @@ class BaseGenome:
         self.records = []
         self.index = {}
         self.strain_sep = "-"
+        self.left_origin = left_origin
+        self.right_origin = right_origin
+        if seqrecord:
+            self.records = seqrecord
+        self._dict_index()
 
     def __str__(self):
         return self.__repr__()
 
     def __repr__(self):
-        return f"{self.__class__.__name__}(path={self.path})"
+        #return f"{self.__class__.__name__}(path={self.path})"
+        return f"{self.__class__.__name__}(strain={self.strain}, species={self.species}, path={self.path}, gc={self.calc_GC_content()})"
 
     def __iter__(self):
         return GenomeIterator(self)
@@ -82,6 +116,26 @@ class BaseGenome:
     def __bool__(self):
         return True if self.index else False
 
+    def __add__(self, other):
+        if not isinstance(other, Genome):
+            raise ValueError(f"other must be instance of Genome, found {type(other)}")
+        if len(self.records) > 1:
+            raise ValueError(f"To concatenate two Genome, there must be only one sequence (number of sequence {len(self.records[0].seq)}).")
+
+        # Construct new seq
+        seq = self.records[0].seq + other.records[0].seq
+
+        # Extract seqfeature from self and other
+        seqfeatures = self.records[0].features 
+        _, _, other_selected_features = other.selected_features(0, len(self.records[0].seq), 0)
+        seqfeatures += [(feature + len(self.records[0].seq)).seqfeature for feature in other_selected_features]
+
+        # Construct new seqrecord based on new_index and new_seq
+        seqrecord = self.get_region_seqrecord(seq, 0, seqfeatures)
+
+        # Return new Genome instance
+        return Genome(self.gbk, seqrecord)
+
     def parse_records(self):
         for record in SeqIO.parse(self.path, "genbank"):
             #self.records.append(record)
@@ -89,7 +143,7 @@ class BaseGenome:
 
     def _dict_index(self):
         append_records = True
-        if self.records: # Not empty = PartialGenome
+        if self.records: # Not empty = Genome
             seqrecords = self.records
             append_records = False
         else: # Empty = New genome
@@ -209,6 +263,10 @@ class BaseGenome:
 
         return self.get_region_seqrecord(new_seq, record_id, seqfeatures)
 
+    def extract_region(self, left, right, record_id=0, strict=True, reverse=False):
+        seqrecord = self.access_region(left, right, record_id, strict, reverse)
+        return Genome(self.gbk, seqrecord, left, right)
+
     def __getitem__(self, key):
         if not self:
             return None
@@ -248,10 +306,12 @@ class BaseGenome:
                 start, end = end, stop
             seqrecord = self.access_region(start, end, record_id)
 
-            return PartialGenome(self.gbk, seqrecord, start, end)
+            return Genome(self.gbk, seqrecord, start, end)
         else:
             raise KeyError(key)
             
+    ######  Search  #######
+
     def search_gene(self, gene):
         for locustag, feature in self:
             if gene == feature.gene:
@@ -286,6 +346,88 @@ class BaseGenome:
         ret = dict([before[-1], after[0]])
         return ret
 
+    def dnaA_at_origin(self, output=""):
+        if output:
+            new_fna = Path(self.check_fasta(output))
+        else:
+            new_fna = Path(self.check_fasta() + ".tmp")
+
+        dnaA_locustag, dnaA_feature = [(locustag, feature) for locustag, feature in self.search_product("DnaA")]
+        if not type(dnaA_feature) == list:
+            dnaA_start = dnaA_feature.start
+            if dnaA_start not in range(0, 11):
+                self.seq[0] = self.seq[0][dnaA_start:] + self.seq[0][:dnaA_start]
+                self.to_fasta(new_fna)
+                return new_fna
+            else:
+                return self.fasta
+        else:
+            raise TypeError(f"'dnaA_feature' variable don't have the right type : {type(dnaA_feature)}")
+        
+
+    def change_origin(self, locustag=None, gene_name=None):
+        # Find the locustag or gene_name
+        if gene_name:
+            starting_feature = self.search_gene(gene_name)
+            start = starting_feature.start
+        if locustag:
+            starting_feature = self[locustag]
+            start = starting_feature.start
+
+        seg_right = self.extract_region(start, len(self.seq[0]))
+        seg_left = self.extract_region(0, start)
+        #Debug
+        #seg_left.format("Test_left.gbk", "genbank")
+        #seg_right.format("Test_right.gbk", "genbank")
+        new_genome = seg_right + seg_left
+        return new_genome
+
+    #####  Drawing  #####
+
+    def reset_origin_coordinate(self):
+        for locustag, feature in self:
+            feature = feature + self.left_origin
+
+    def draw(self, output, output_format, diagram=None, feature_set=None, diagram_name="MyDiagram", format="linear", pagesize=(1920, 80), key_color=None, key_color_args=None):
+        self.reset_origin_coordinate()
+
+        if not diagram and not feature_set:
+            diagram = GenomeDiagram.Diagram(diagram_name)
+            track_for_features = diagram.new_track(1, name="Annotated Features", scale=0)
+            feature_set = track_for_features.new_set()
+        else:
+            raise ValueError(f"You need to pass both a diagram and feature_set.")
+
+        #start_feature_list = []
+        #end_feature_list = []
+        for locustag, feature in self:
+            feat_sigil = "ARROW"
+            feat_arrowshaft = 0.6
+            feat_border_color = colors.black
+            if key_color:
+                feat_color = key_color(*key_color_args)
+            else:
+                feat_color = colors.white
+
+            #start_feature_list.append(feature.start)
+            #end_feature_list.append(feature.end)
+
+            feature_set.add_feature(feature.feature, sigil=feat_sigil, color=feat_color, border=feat_border_color,  arrowshaft_height=feat_arrowshaft)
+
+        diagram.draw(format=format, pagesize=pagesize, fragments=1, fragment_size=0.99, track_size=0.6, start=self.left_origin, end=self.right_origin, x=0.01, y=0.01)
+        diagram.write(f"{output}.{output_format}", output_format)
+
+    def draw_EGF(self, output):
+        self.reset_origin_coordinate()
+        features=[]
+        for locustag, feature in self:
+            #Add color management
+            features.append(GraphicFeature(start=feature.start, end=feature.end, strand=feature.strand, color="#ffcccc", label=locustag))
+
+        record = GraphicRecord(first_index=self.left_origin, sequence_length=len(self.seq[0]), features=features)
+        record.plot(figure_width=8)
+        plt.savefig(output, dpi=300)
+
     # Generic function
     def format(self, output, fmt):
         count = SeqIO.write(self.records, output, fmt)
@@ -309,7 +451,7 @@ class BaseGenome:
         
         return self.fasta
 
-    #####  Metadata #####
+    #####  Metadata  #####
 
     @property
     def species(self):
@@ -413,176 +555,148 @@ class BaseGenome:
             return round(pGC, 2)
 
 
-class GenomeIterator:
-    def __init__(self, genome):
-        self.genome = genome
-        self.record_id = 0
-        self.n_features_record = 0
-        self.current_locus = 0
-        self.cursor = 0
-        self.max = len(genome) # Total number of locustag in all records
-
-    def __iter__(self):
-        return self
-
-    #d = 0: {"L1": [1, 2], "L2": [3, 4, 5]}, 1: {"L3": [1, 2], "L4": [3, 4, 5]}}
-    def __next__(self):
-        if self.cursor >= self.max: # End of the file - StopIteration
-            raise StopIteration
-        self.n_features_record = len(self.genome.index[self.record_id])
-        locustag = list(self.genome.index[self.record_id].keys())[self.current_locus]
-        feature = self.genome.access_locustag(locustag)
-        if feature:
-            self.cursor += 1
-            self.current_locus += 1
-            if self.current_locus >= self.n_features_record: # End of this record - Next record
-                self.record_id += 1
-                self.current_locus = 0
-            return (locustag, feature)
-
-
-class Genome(BaseGenome):
-    #@timer
-    def __init__(self, genbank):
-        super().__init__(genbank)
-        self._dict_index()
-
-    def __repr__(self):
-        return f"{self.__class__.__name__}(strain={self.strain}, species={self.species}, path={self.path}, gc={self.calc_GC_content()})"
-
-    ###### Search #######
-
-    def extract_region(self, left, right, record_id=0, strict=True, reverse=False):
-        seqrecord = self.access_region(left, right, record_id, strict, reverse)
-        return PartialGenome(self.gbk, seqrecord, left, right)
-
-    def dnaA_at_origin(self, output=""):
-        if output:
-            new_fna = Path(self.check_fasta(output))
-        else:
-            new_fna = Path(self.check_fasta() + ".tmp")
-
-        dnaA_locustag, dnaA_feature = [(locustag, feature) for locustag, feature in self.search_product("DnaA")]
-        if not type(dnaA_feature) == list:
-            dnaA_start = dnaA_feature.start
-            if dnaA_start not in range(0, 11):
-                self.seq[0] = self.seq[0][dnaA_start:] + self.seq[0][:dnaA_start]
-                self.to_fasta(new_fna)
-                return new_fna
-            else:
-                return self.fasta
-        else:
-            raise TypeError(f"'dnaA_feature' variable don't have the right type : {type(dnaA_feature)}")
-        
-
-    def change_origin(self, locustag=None, gene_name=None):
-        # Find the locustag or gene_name
-        if gene_name:
-            starting_feature = self.search_gene(gene_name)
-            start = starting_feature.start
-        if locustag:
-            starting_feature = self[locustag]
-            start = starting_feature.start
-
-        seg_right = self.extract_region(start, len(self.seq[0]))
-        seg_left = self.extract_region(0, start)
-        #Debug
-        #seg_left.format("Test_left.gbk", "genbank")
-        #seg_right.format("Test_right.gbk", "genbank")
-        new_genome = seg_right + seg_left
-        return new_genome
+#class Genome(BaseGenome):
+#    #@timer
+#    def __init__(self, genbank):
+#        super().__init__(genbank)
+#        self._dict_index()
+#
+#    def __repr__(self):
+#        return f"{self.__class__.__name__}(strain={self.strain}, species={self.species}, path={self.path}, gc={self.calc_GC_content()})"
+#
+#    ###### Search #######
+#
+#    def extract_region(self, left, right, record_id=0, strict=True, reverse=False):
+#        seqrecord = self.access_region(left, right, record_id, strict, reverse)
+#        return PartialGenome(self.gbk, seqrecord, left, right)
+#
+#    def dnaA_at_origin(self, output=""):
+#        if output:
+#            new_fna = Path(self.check_fasta(output))
+#        else:
+#            new_fna = Path(self.check_fasta() + ".tmp")
+#
+#        dnaA_locustag, dnaA_feature = [(locustag, feature) for locustag, feature in self.search_product("DnaA")]
+#        if not type(dnaA_feature) == list:
+#            dnaA_start = dnaA_feature.start
+#            if dnaA_start not in range(0, 11):
+#                self.seq[0] = self.seq[0][dnaA_start:] + self.seq[0][:dnaA_start]
+#                self.to_fasta(new_fna)
+#                return new_fna
+#            else:
+#                return self.fasta
+#        else:
+#            raise TypeError(f"'dnaA_feature' variable don't have the right type : {type(dnaA_feature)}")
+#        
+#
+#    def change_origin(self, locustag=None, gene_name=None):
+#        # Find the locustag or gene_name
+#        if gene_name:
+#            starting_feature = self.search_gene(gene_name)
+#            start = starting_feature.start
+#        if locustag:
+#            starting_feature = self[locustag]
+#            start = starting_feature.start
+#
+#        seg_right = self.extract_region(start, len(self.seq[0]))
+#        seg_left = self.extract_region(0, start)
+#        #Debug
+#        #seg_left.format("Test_left.gbk", "genbank")
+#        #seg_right.format("Test_right.gbk", "genbank")
+#        new_genome = seg_right + seg_left
+#        return new_genome
+#
+#
+#    #def check_cached_data(self):
+#    #    md5hash = self.md5hasher.hash_file(self.gbk)
+#    #    path_cache_dir = Path(__file__).resolve().parent.joinpath(".cache")
+#    #    if not path_cache_dir.is_dir():
+#    #        path_cache_dir.mkdir()
+#    #    cache_list = [f.name for f in path_cache_dir.glob("*")]
+#    #    path_cache_file = path_cache_dir.joinpath(md5hash)
+#    #    if md5hash in cache_list:
+#    #        self.cached = True
+#    #        with open(path_cache_file, "rb") as fd:
+#    #            self.index = pickle.load(fd)
+#    #    else:
+#    #        # Save index object in binary file named with the md5 hash of the genbank file used to created it
+#    #        self._dict_index()
+#    #        with open(path_cache_file, "wb") as fd:
+#    #            pickle.dump(self.index, fd)
 
 
-    #def check_cached_data(self):
-    #    md5hash = self.md5hasher.hash_file(self.gbk)
-    #    path_cache_dir = Path(__file__).resolve().parent.joinpath(".cache")
-    #    if not path_cache_dir.is_dir():
-    #        path_cache_dir.mkdir()
-    #    cache_list = [f.name for f in path_cache_dir.glob("*")]
-    #    path_cache_file = path_cache_dir.joinpath(md5hash)
-    #    if md5hash in cache_list:
-    #        self.cached = True
-    #        with open(path_cache_file, "rb") as fd:
-    #            self.index = pickle.load(fd)
-    #    else:
-    #        # Save index object in binary file named with the md5 hash of the genbank file used to created it
-    #        self._dict_index()
-    #        with open(path_cache_file, "wb") as fd:
-    #            pickle.dump(self.index, fd)
-
-
-class PartialGenome(BaseGenome):
-    def __init__(self, genbank, seqrecord, left_origin=0, right_origin=0):
-        super().__init__(genbank)
-        self.left_origin = left_origin
-        self.right_origin = right_origin
-        self.records = seqrecord
-        self._dict_index()
-
-    def __add__(self, other):
-        if not isinstance(other, PartialGenome):
-            raise ValueError(f"other must be instance of PartialGenome, found {type(other)}")
-        if len(self.records) > 1:
-            raise ValueError(f"To concatenate two PartialGenome, there must be only one sequence (number of sequence {len(self.records[0].seq)}).")
-
-        # Construct new seq
-        seq = self.records[0].seq + other.records[0].seq
-
-        # Extract seqfeature from self and other
-        seqfeatures = self.records[0].features 
-        _, _, other_selected_features = other.selected_features(0, len(self.records[0].seq), 0)
-        seqfeatures += [(feature + len(self.records[0].seq)).seqfeature for feature in other_selected_features]
-
-        # Construct new seqrecord based on new_index and new_seq
-        seqrecord = self.get_region_seqrecord(seq, 0, seqfeatures)
-
-        # Return new PartialGenome instance
-        return PartialGenome(self.gbk, seqrecord)
-
-
-    def reset_origin_coordinate(self):
-        for locustag, feature in self:
-            feature = feature + self.left_origin
-
-    def draw(self, output, output_format, diagram=None, feature_set=None, diagram_name="MyDiagram", format="linear", pagesize=(1920, 80), key_color=None, key_color_args=None):
-        self.reset_origin_coordinate()
-
-        if not diagram and not feature_set:
-            diagram = GenomeDiagram.Diagram(diagram_name)
-            track_for_features = diagram.new_track(1, name="Annotated Features", scale=0)
-            feature_set = track_for_features.new_set()
-        else:
-            raise ValueError(f"You need to pass both a diagram and feature_set.")
-
-        #start_feature_list = []
-        #end_feature_list = []
-        for locustag, feature in self:
-            feat_sigil = "ARROW"
-            feat_arrowshaft = 0.6
-            feat_border_color = colors.black
-            if key_color:
-                feat_color = key_color(*key_color_args)
-            else:
-                feat_color = colors.white
-
-            #start_feature_list.append(feature.start)
-            #end_feature_list.append(feature.end)
-
-            feature_set.add_feature(feature.feature, sigil=feat_sigil, color=feat_color, border=feat_border_color,  arrowshaft_height=feat_arrowshaft)
-
-        diagram.draw(format=format, pagesize=pagesize, fragments=1, fragment_size=0.99, track_size=0.6, start=self.left_origin, end=self.right_origin, x=0.01, y=0.01)
-        diagram.write(f"{output}.{output_format}", output_format)
-
-    def draw_EGF(self, output):
-        self.reset_origin_coordinate()
-        features=[]
-        for locustag, feature in self:
-            #Add color management
-            features.append(GraphicFeature(start=feature.start, end=feature.end, strand=feature.strand, color="#ffcccc", label=locustag))
-
-        record = GraphicRecord(first_index=self.left_origin, sequence_length=len(self.seq[0]), features=features)
-        record.plot(figure_width=8)
-        plt.savefig(output, dpi=300)
+#class PartialGenome(BaseGenome):
+#    def __init__(self, genbank, seqrecord, left_origin=0, right_origin=0):
+#        super().__init__(genbank)
+#        self.left_origin = left_origin
+#        self.right_origin = right_origin
+#        self.records = seqrecord
+#        self._dict_index()
+#
+#    def __add__(self, other):
+#        if not isinstance(other, PartialGenome):
+#            raise ValueError(f"other must be instance of PartialGenome, found {type(other)}")
+#        if len(self.records) > 1:
+#            raise ValueError(f"To concatenate two PartialGenome, there must be only one sequence (number of sequence {len(self.records[0].seq)}).")
+#
+#        # Construct new seq
+#        seq = self.records[0].seq + other.records[0].seq
+#
+#        # Extract seqfeature from self and other
+#        seqfeatures = self.records[0].features 
+#        _, _, other_selected_features = other.selected_features(0, len(self.records[0].seq), 0)
+#        seqfeatures += [(feature + len(self.records[0].seq)).seqfeature for feature in other_selected_features]
+#
+#        # Construct new seqrecord based on new_index and new_seq
+#        seqrecord = self.get_region_seqrecord(seq, 0, seqfeatures)
+#
+#        # Return new PartialGenome instance
+#        return PartialGenome(self.gbk, seqrecord)
+#
+#
+#    def reset_origin_coordinate(self):
+#        for locustag, feature in self:
+#            feature = feature + self.left_origin
+#
+#    def draw(self, output, output_format, diagram=None, feature_set=None, diagram_name="MyDiagram", format="linear", pagesize=(1920, 80), key_color=None, key_color_args=None):
+#        self.reset_origin_coordinate()
+#
+#        if not diagram and not feature_set:
+#            diagram = GenomeDiagram.Diagram(diagram_name)
+#            track_for_features = diagram.new_track(1, name="Annotated Features", scale=0)
+#            feature_set = track_for_features.new_set()
+#        else:
+#            raise ValueError(f"You need to pass both a diagram and feature_set.")
+#
+#        #start_feature_list = []
+#        #end_feature_list = []
+#        for locustag, feature in self:
+#            feat_sigil = "ARROW"
+#            feat_arrowshaft = 0.6
+#            feat_border_color = colors.black
+#            if key_color:
+#                feat_color = key_color(*key_color_args)
+#            else:
+#                feat_color = colors.white
+#
+#            #start_feature_list.append(feature.start)
+#            #end_feature_list.append(feature.end)
+#
+#            feature_set.add_feature(feature.feature, sigil=feat_sigil, color=feat_color, border=feat_border_color,  arrowshaft_height=feat_arrowshaft)
+#
+#        diagram.draw(format=format, pagesize=pagesize, fragments=1, fragment_size=0.99, track_size=0.6, start=self.left_origin, end=self.right_origin, x=0.01, y=0.01)
+#        diagram.write(f"{output}.{output_format}", output_format)
+#
+#    def draw_EGF(self, output):
+#        self.reset_origin_coordinate()
+#        features=[]
+#        for locustag, feature in self:
+#            #Add color management
+#            features.append(GraphicFeature(start=feature.start, end=feature.end, strand=feature.strand, color="#ffcccc", label=locustag))
+#
+#        record = GraphicRecord(first_index=self.left_origin, sequence_length=len(self.seq[0]), features=features)
+#        record.plot(figure_width=8)
+#        plt.savefig(output, dpi=300)
 
 
 
