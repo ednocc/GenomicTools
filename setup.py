@@ -2,11 +2,13 @@
 
 # From OLCTools at https://github.com/OLC-Bioinformatics/OLCTools
 
+import os
+from pathlib import Path
 from setuptools import setup, find_packages
 
 setup(
     name="GenomicTools",
-    version="0.5.0",
+    version="0.7.0",
     packages=find_packages(),
     include_package_data=True,
     author="Cyril Conde",
@@ -24,3 +26,10 @@ setup(
                       'joblib',
                       'dna_features_viewer']
 )
+
+util_dir = Path(__file__).resolve().parent / "genomictools/utils/"
+usr_bin_dir = Path.home() / "bin"
+
+if usr_bin_dir.exists():
+    os.symlink(util_dir / "change_origin.py", usr_bin_dir / "change_origin")
+    print("Some scripts have been symlinked to your ~/bin directory")
