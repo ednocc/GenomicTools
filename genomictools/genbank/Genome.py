@@ -445,7 +445,7 @@ class Genome:
 
     #####  Metadata  #####
 
-    def source(self, record_id):
+    def source(self, record_id=0):
         return self.records[record_id].features[0]
 
     def features(self, record_id=0):

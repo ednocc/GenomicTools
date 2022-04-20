@@ -29,7 +29,7 @@ class Draw:
             # Upper track has the biggest number
             self.genome_region = list(reversed(genome_region))
         else: # genome_region == 1
-            self.genome_region = genome_region
+            self.genome_region = list(genome_region)
 
         self.diagram = GenomeDiagram.Diagram(title)
         self.track = {}
@@ -37,6 +37,7 @@ class Draw:
         for n, region in enumerate(self.genome_region, 1):
             track = self.diagram.new_track(n, name=region.gbk, scale=0)
             track_feature_set = track.new_set()
+            print(region.features())
             for locustag, feature in region:
                 print(feature.locustag, feature.gene, feature.start, feature.end, sep="\t")
                 feat_sigil = "ARROW"

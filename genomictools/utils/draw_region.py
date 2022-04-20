@@ -35,7 +35,8 @@ if __name__ == '__main__':
     else:
         position = args.position
 
-    region = h37Rv_genome.extract_region(position - args.region_size, position + args.region_size)
+    region = genome.extract_region(position - args.region_size, position + args.region_size)
+    print(region.features())
 
     title = f"Region_at_{position}"
     drawing = Draw(title, region)
