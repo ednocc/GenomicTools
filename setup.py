@@ -31,5 +31,8 @@ util_dir = Path(__file__).resolve().parent / "genomictools/utils/"
 usr_bin_dir = Path.home() / "bin"
 
 if usr_bin_dir.exists():
-    os.symlink(util_dir / "change_origin.py", usr_bin_dir / "change_origin")
+    try:
+        os.symlink(util_dir / "change_origin.py", usr_bin_dir / "change_origin")
+    except FileExistsError:
+        pass
     print("Some scripts have been symlinked to your ~/bin directory")
