@@ -22,10 +22,18 @@ class Draw:
         self.tmp_dir = Path(__file__).parent / f"tmp_{datetime.now().strftime('%d%m%y_%H%M%S_%f')}"
         if not self.tmp_dir.exists():
             self.tmp_dir.mkdir()
-        # Upper track has the biggest number
-        self.genome_region = list(reversed(genome_region))
+
+        if len(genome_region) == 0:
+            raise ValueError(f"Nothing to draw.")
+        elif len(genome_region) > 1:
+            # Upper track has the biggest number
+            self.genome_region = list(reversed(genome_region))
+        else: # genome_region == 1
+            self.genome_region = genome_region
+
         self.diagram = GenomeDiagram.Diagram(title)
         self.track = {}
+
         for n, region in enumerate(self.genome_region, 1):
             track = self.diagram.new_track(n, name=region.gbk, scale=0)
             track_feature_set = track.new_set()
@@ -51,7 +59,7 @@ class Draw:
         return zip(a, b)
 
 
-    def draw(self, prefix, output_format):
+    def blast(self):
         # itertools.pairwise('ABCDEFG') --> AB BC CD DE EF FG
         for (region1_id, (region1, track1, feature_set1)), (region2_id, (region2, track2, feature_set2)) in self._pairwise(self.track.items()):
             region1_fasta = f"{self.tmp_dir}/{region1.gbk.replace('.gbk', '_' + str(region1.left_origin) + '_' + str(region1.right_origin) + '.fasta')}"
@@ -90,6 +98,11 @@ class Draw:
 
                         link = CrossLink(query_link_coordinate, hit_link_coordinate, colors.firebrick, colors.lightgrey)
                         self.diagram.cross_track_links.append(link)
+
+
+    def draw(self, prefix, output_format):
+        if len(self.genome_region) > 1:
+            self.blast()
 
         self.diagram.draw(format="linear", pagesize=(1920, 250 * ((len(self.genome_region) * 2) - 1)), fragments=1, fragment_size=0.99, track_size=0.2, x=0.01, y=0.01)#, start=0, end=15903, x=0.01, y=0.01)
         self.diagram.write(prefix + "." + output_format, output_format)
