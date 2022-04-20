@@ -9,6 +9,7 @@ def parse_argument():
     parser.add_argument("-i", "--gbk", required=True, help="Genbank file to rotate.")
     parser.add_argument("-o", "--output", required=True, help="Output genbank file.")
     parser.add_argument("-r", "--reverse", action="store_true", help="Reverse complement the sequence.")
+    parser.add_argument("-d", "--debug", action="store_true", help="Enable debugging messages.")
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-g", "--gene", help="Gene name which will serve as the new origin.")
     group.add_argument("-l", "--locustag", help="Locustag which will serve as the new origin.")
@@ -22,10 +23,10 @@ if __name__ == '__main__':
 
     genome = Genome(args.gbk)
     if args.gene:
-        new_genome = genome.change_origin(gene_name=args.gene, reverse=args.reverse)
+        new_genome = genome.change_origin(gene_name=args.gene, reverse=args.reverse, debug=args.debug)
     elif args.locustag:
-        new_genome = genome.change_origin(locustag=args.locustag, reverse=args.reverse)
+        new_genome = genome.change_origin(locustag=args.locustag, reverse=args.reverse, debug=args.debug)
     else:
-        new_genome = genome.change_origin(position=args.position, reverse=args.reverse)
+        new_genome = genome.change_origin(position=args.position, reverse=args.reverse, debug=args.debug)
 
     new_genome.format(args.output, "genbank")

@@ -128,7 +128,7 @@ class Genome:
 
         # Extract seqfeature from self and other
         seqfeatures = self.features() 
-        _, _, other_selected_features = other.select_features(0, len(self.sequence()), 0)
+        _, _, other_selected_features = other.select_features(0, len(other.sequence()), 0)
         seqfeatures += [(feature + len(self.sequence())).seqfeature for feature in other_selected_features]
 
         # Construct new seqrecord based on new_index and new_seq
@@ -180,7 +180,7 @@ class Genome:
             raise ValueError(f"Record need to be of type int or str. Given: {type(name)}")
 
     # Iter throught the underlying data structure
-    def iterfeatures(self, record_id, feat_type=None):
+    def iterfeatures(self, record_id=0, feat_type=None):
         record_id = self.translate_records_name(record_id)
         # Skip source feature
         for feat_id, seqfeature in enumerate(self.features(record_id)[1:], 1):
@@ -348,7 +348,7 @@ class Genome:
         ret = dict([before[-1], after[0]])
         return ret
 
-    def change_origin(self, record_id=0, gene_name=None, locustag=None, position=None, reverse=False):
+    def change_origin(self, record_id=0, gene_name=None, locustag=None, position=None, reverse=False, debug=False):
         # Find the locustag or gene_name
         if gene_name:
             starting_feature = self.search_gene(gene_name)
@@ -359,12 +359,20 @@ class Genome:
         if position:
             start = position
 
-
         seg_right = self.extract_region(start, len(self.sequence()), reverse=reverse)
         seg_left = self.extract_region(0, start, reverse=reverse)
+
         #Debug
-        #seg_left.format("Test_left.gbk", "genbank")
-        #seg_right.format("Test_right.gbk", "genbank")
+        if debug:
+            seg_left.format("Debug_left.gbk", "genbank")
+            print("Left segment features:")
+            for feature in seg_left.iterfeatures():
+                print(feature)
+            seg_right.format("Debug_right.gbk", "genbank")
+            print("Right segment features:")
+            for feature in seg_right.iterfeatures():
+                print(feature)
+
         new_genome = seg_right + seg_left
         return new_genome
 
