@@ -335,10 +335,11 @@ class Genome:
         record_id = self.translate_records_name(record_id)
 
         for locustag, feature in self:
-            if feature.start < start:
-                before.append((locustag, feature))
-            if feature.start > end:
-                after.append((locustag, feature))
+            if feature.record_id == record_id:
+                if feature.start < start:
+                    before.append((locustag, feature))
+                if feature.start > end:
+                    after.append((locustag, feature))
 
         # Filtering
         if not pseudo:
@@ -359,8 +360,8 @@ class Genome:
         if position:
             start = position
 
-        seg_right = self.extract_region(start, len(self.sequence()), reverse=reverse)
-        seg_left = self.extract_region(0, start, reverse=reverse)
+        seg_right = self.extract_region(start, len(self.sequence(record_id)), record_id=record_id, reverse=reverse)
+        seg_left = self.extract_region(0, start, record_id=record_id, reverse=reverse)
 
         #Debug
         if debug:
@@ -379,11 +380,13 @@ class Genome:
     #####  Drawing  #####
 
     def reset_origin_coordinate(self, record_id=0):
+        record_id = self.translate_records_name(record_id)
         self.records[record_id].features = [self.source(record_id)] + [(feature + self.left_origin).seqfeature for feature in self.iterfeatures(record_id)]
         #for feature in self.iterfeatures():
         #    feature = feature + self.left_origin
 
     def apply_new_coordinate(self, record_id=0):
+        record_id = self.translate_records_name(record_id)
         self.records[record_id].features = [self.source(record_id)] + [(feature - self.left_origin).seqfeature for feature in self.iterfeatures(record_id)]
         #for feature in self.iterfeatures():
         #    feature = feature + self.left_origin
@@ -454,15 +457,19 @@ class Genome:
     #####  Metadata  #####
 
     def source(self, record_id=0):
+        record_id = self.translate_records_name(record_id)
         return self.records[record_id].features[0]
 
     def features(self, record_id=0):
+        record_id = self.translate_records_name(record_id)
         return self.records[record_id].features
 
     def sequence(self, record_id=0):
+        record_id = self.translate_records_name(record_id)
         return self.records[record_id].seq
 
     def dbxref(self, record_id=0):
+        record_id = self.translate_records_name(record_id)
         return self.records[record_id].features[0].qualifiers.get("db_xref", ["NA"])[0]
 
     @property
