@@ -8,7 +8,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="GenomicTools",
-    version="0.7.0",
+    version="0.9.0",
     packages=find_packages(),
     include_package_data=True,
     author="Cyril Conde",

@@ -6,7 +6,7 @@ try:
     from Bio import Alphabet
 except ImportError:
     Alphabet = None
-from Bio.SeqFeature import SeqFeature, FeatureLocation
+from Bio.SeqFeature import SeqFeature, FeatureLocation, CompoundLocation
 from Bio.SeqRecord import SeqRecord
 from Bio import SeqIO
 
@@ -22,11 +22,13 @@ def create_feature(start, end, seq="ATGC", strand=None, type=None, qualifiers=No
     return Feature(seqfeature, seq)
 
 class Feature:
-    def __init__(self, seqfeature, seq, record_id, feat_id):
+    def __init__(self, seqfeature, seq, record_id, feat_id, genome_sequence_length):
         self.seqfeature = seqfeature
+        self.location_operator = self.seqfeature.location_operator
         self.seq = seq
         self.record_id = record_id
         self.feat_id = feat_id
+        self._genome_sequence_length = genome_sequence_length
         if self.seqfeature.qualifiers.get('pseudo', False):
             self.pseudo = True
         else:
@@ -43,11 +45,17 @@ class Feature:
     
     @property
     def start(self):
-        return self.seqfeature.location.start.position
+        if self.location_operator:
+            return self.seqfeature.location.parts[0].start.position
+        else:
+            return self.seqfeature.location.start.position
     
     @property
     def end(self):
-        return self.seqfeature.location.end.position
+        if self.location_operator:
+            return self.seqfeature.location.parts[1].end.position
+        else:
+            return self.seqfeature.location.end.position
     
     @property
     def qualifiers(self):
@@ -79,6 +87,17 @@ class Feature:
                 # Cas des rRNA, tRNA, ncRNA, tmRNA...
                 return None
 
+    @property
+    def genome_sequence_length(self):
+        return self._genome_sequence_length
+
+    @genome_sequence_length.setter
+    def genome_sequence_length(self, value):
+        if isinstance(value, int) and value >= 0:
+            self._genome_sequence_length = value
+        else:
+            ValueError(f"value must be a positive int (>=0).")
+
     ## End
 
     def add_other(self, other):
@@ -90,43 +109,55 @@ class Feature:
         self.other.append(other)
     
     def _getNewSeqFeature(self, start, end, strand, type, qualifiers):
-        loc = FeatureLocation(start, end, strand=strand)
-        newFeature = SeqFeature(loc, type=type, qualifiers=qualifiers)
-        return newFeature
+        if start > end:
+            loc = CompoundLocation([FeatureLocation(start, self.genome_sequence_length, strand=strand), FeatureLocation(0, end, strand=strand)])
+        else:
+            loc = FeatureLocation(start, end, strand=strand)
+        newSeqFeature = SeqFeature(loc, type=type, qualifiers=qualifiers)
+        return newSeqFeature
 
     def __add__(self, int_value):
-        newStart = self.start + int_value
-        newEnd = self.end + int_value
-        newFeature = self._getNewSeqFeature(newStart, newEnd, self.strand, self.type, self.qualifiers)
-        return Feature(newFeature, self.seq, self.record_id, self.feat_id)
+        newStart = self.validate_location(self.start + int_value)
+        newEnd = self.validate_location(self.end + int_value)
+        newSeqFeature = self._getNewSeqFeature(newStart, newEnd, self.strand, self.type, self.qualifiers)
+        return Feature(newSeqFeature, self.seq, self.record_id, self.feat_id, self.genome_sequence_length)
 
     def __radd__(self, int_value):
         return self.__add__(int_value)
 
     def __sub__(self, int_value):
-        newStart = self.start - int_value
-        newEnd = self.end - int_value
-        newFeature = self._getNewSeqFeature(newStart, newEnd, self.strand, self.type, self.qualifiers)
-        return Feature(newFeature, self.seq, self.record_id, self.feat_id)
+        newStart = self.validate_location(self.start - int_value)
+        newEnd = self.validate_location(self.end - int_value)
+        newSeqFeature = self._getNewSeqFeature(newStart, newEnd, self.strand, self.type, self.qualifiers)
+        return Feature(newSeqFeature, self.seq, self.record_id, self.feat_id, self.genome_sequence_length)
 
     def __rsub__(self, int_value):
         return self.__sub__(int_value)
+
+    def validate_location(self, position):
+        if position < 0 or position >= self.genome_sequence_length:
+            return position % self.genome_sequence_length
+        else:
+            return position
 
     # For compatibility
     def lshift(self, shift):
         return self.__sub__(shift)
 
-    def reverse_complement(self, length_seq):
+    def reverse_complement(self):
         if self.strand == 1:
             newStrand = -1
         else:
             newStrand = 1
 
-        newEnd = length_seq - self.start + 1
-        newStart = length_seq - self.end + 1
+        #if self._genome_sequence_length is None:
+        #    self.genome_sequence_length = length_seq
 
-        newFeature = self._getNewSeqFeature(newStart, newEnd, newStrand, self.type, self.qualifiers)
-        return Feature(newFeature, self.seq.reverse_complement(), self.record_id, self.feat_id)
+        newEnd = self.genome_sequence_length - self.start
+        newStart = self.genome_sequence_length - self.end
+
+        newSeqFeature = self._getNewSeqFeature(newStart, newEnd, newStrand, self.type, self.qualifiers)
+        return Feature(newSeqFeature, self.seq.reverse_complement(), self.record_id, self.feat_id, self.genome_sequence_length)
 
     def to_seqrecord(self, type="dna", id="", description=""):
         if not description:
@@ -167,6 +198,10 @@ class Feature:
 
     def __repr__(self):
         return f"Feature(locustag={self.locustag}, type={self.type}, start={self.start}, end={self.end}, product={self.product})"
+
+    def __hash__(self):
+        return hash(self.locustag + self.type + str(self.seq))
+        #return hash(self.seq)
 
     def __getitem__(self, key):
         if isinstance(key, str):

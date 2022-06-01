@@ -84,7 +84,9 @@ class Genome:
         self.fasta = None
         self.extension = os.path.splitext(self.path)[1]
         self.name = "_".join(self.gbk.strip(self.extension).split("_")[:3])
-        self.major_type = ["CDS", "tRNA", "rRNA", "ncRNA", "tmRNA"]
+        self.types = ["CDS", "tRNA", "rRNA", "ncRNA", "tmRNA", "misc_feature", "repeat_region", "gene"]
+        #self.major_type = ["CDS", "tRNA", "rRNA", "ncRNA", "tmRNA"]
+        #self.minor_type = ["misc_feature", "gene"]
         self.index = {}
         self.strain_sep = "-"
         self.left_origin = left_origin
@@ -115,7 +117,11 @@ class Genome:
         return self.index == other.index
 
     def __bool__(self):
-        return True if self.index else False
+        for locustag_dict in self.index.values():
+            if locustag_dict:
+                return True
+        #return True if self.index else False
+        return False
 
     def __add__(self, other):
         if not isinstance(other, Genome):
@@ -174,7 +180,7 @@ class Genome:
                 raise Exception(f"Record name or id was not be found in this genome. {record}")
         elif isinstance(name, int):
             if name >= len(self.records):
-                raise ValueError("Record value is too high. Given: {name} Max: {len(self.records)}")
+                raise ValueError(f"Record value is too high. Given: {name} Max: {len(self.records)}")
             return int(name)
         else:
             raise ValueError(f"Record need to be of type int or str. Given: {type(name)}")
@@ -186,39 +192,96 @@ class Genome:
         for feat_id, seqfeature in enumerate(self.features(record_id)[1:], 1):
             if feat_type and seqfeature.type != feat_type:
                 continue
-            yield Feature(seqfeature, seqfeature.extract(self.sequence(record_id)), record_id, feat_id)
+            yield Feature(seqfeature, seqfeature.extract(self.sequence(record_id)), record_id, feat_id, len(self.sequence(record_id)))
+
+    def sort_features(self, features):
+        return [feat for feat in sorted(features, key=lambda f: f.start)]
 
     def select_features(self, left, right, record_id=0, strict=True, feat_type=None):
         selected_features = []
+        # TODO: check if feature in selected_features
+        # TODO: features with a CompoundLocation are always selected
         for feature in self.iterfeatures(record_id, feat_type):
-            if feature.start <= left < feature.end: # overlapping feature on the left border
-                if not strict:
-                    left = feature.start
+            if left < feature.start < right:
                 selected_features.append(feature)
-            elif left <= feature.start and feature.end <= right: # feature intern to the region
-                selected_features.append(feature)
-            elif feature.start < right and right <= feature.end:
-                if not strict: # overlapping feature on the right border
-                    right = feature.end
+            elif left < feature.end < right:
                 selected_features.append(feature)
             else:
                 continue
+                
+            #if l in feature and r in feature: # For region smaller than a feature
+            #    selected_features.append(feature)
+            #if feature.start > feature.end:
+            #    if feature.start <= left < feature.end: # overlapping feature on the left border
+            #else:
+            #    if feature.start <= left < feature.end: # overlapping feature on the left border
+            #        if not strict:
+            #            left = feature.start
+            #        selected_features.append(feature)
+            #    elif left <= feature.start and feature.end <= right: # feature intern to the region
+            #        selected_features.append(feature)
+            #    elif feature.start < right and right <= feature.end:
+            #        if not strict: # overlapping feature on the right border
+            #            right = feature.end
+            #        selected_features.append(feature)
+            #    else:
+            #        continue
+
+        selected_features = self.sort_features(set(selected_features))
+        #if not strict:
+        #    new_start = selected_features[0].start
+        #    if new_start > right:
+        #        new_start = 0
+        #    left = new_start
+        #    new_end = selected_features[-1].end
+        #    if new_end < :
+        #        pass
+        #    right = new_end
 
         return left, right, selected_features
+
+    def access_seqfeature(self, left, right, record_id=0, strict=True, feat_type=None):
+        if left >= right:
+            right, _, selected_features_right = self.select_features(right, len(self.sequence(record_id)), record_id, strict, feat_type)
+            # Substract left coordinate as seqfeatures start at 0.
+            selected_features_right = [feat.lshift(left) for feat in selected_features_right]
+            _, left, selected_features_left = self.select_features(0, left, record_id, strict, feat_type)
+            # Add length from left to the end of the genome as the seqfeatures start directly after the right segment.
+            selected_features_left = [(feat + (len(self.sequence(record_id)) - left)) for feat in selected_features_left]
+            selected_features = selected_features_right + selected_features_left
+        else:
+            left, right, selected_features = self.select_features(left, right, record_id, strict, feat_type)
+            selected_features = [feat.lshift(left) for feat in selected_features]
+
+        # Sort features by starting position and convert to SeqFeature
+        selected_features = [feat.seqfeature for feat in self.sort_features(set(selected_features))]
+
+        return selected_features
+
+    def get_seqfeature_by_rank(self, record_id, feat_id_list):
+        types_rank = dict([(v, k) for k, v in enumerate(self.types)])
+        seqfeatures_rank = []
+        for feat_id in feat_id_list:
+            seqfeature = self.features(record_id)[feat_id]
+            rank = types_rank[seqfeature.type]
+            seqfeatures_rank.append((feat_id, rank))
+        # Sort list by rank and return the first feat_id
+        selected_feat_id = sorted(seqfeatures_rank, key=lambda x: x[1])[0][0]
+        seqfeature = self.features(record_id)[selected_feat_id]
+        return selected_feat_id, seqfeature
 
     # Index based
     def access_locustag(self, locustag):
         for record_id in self.index:
             if self.index[record_id].get(locustag, False):
-                for feat_id in self.index[record_id][locustag]:
-                    seqfeature = self.features(record_id)[feat_id]
-                    if seqfeature.type in self.major_type:
-                        return Feature(seqfeature, seqfeature.extract(self.sequence(record_id)), record_id, feat_id)
+                feat_id_list = self.index[record_id][locustag]
+                feat_id, seqfeature = self.get_seqfeature_by_rank(record_id, feat_id_list)
+                return Feature(seqfeature, seqfeature.extract(self.sequence(record_id)), record_id, feat_id, len(self.sequence(record_id)))
 
     def access_feature_id(self, record_id, feat_id):
         record_id = self.translate_records_name(record_id)
         seqfeature = self.features(record_id)[feat_id]
-        return Feature(seqfeature, seqfeature.extract(self.sequence(record_id)), record_id, feat_id)
+        return Feature(seqfeature, seqfeature.extract(self.sequence(record_id)), record_id, feat_id, len(self.sequence(record_id)))
 
     def access_position(self, position, record_id=0):
         record_id = self.translate_records_name(record_id)
@@ -239,6 +302,10 @@ class Genome:
         except Exception as e:
             raise ValueError(f"record_id params must be int or str. {type(record_id)}.\n({e})")
 
+    def access_seqrecord(self, record_id):
+        record_id = self.translate_records_name(record_id)
+        return Genome(self.gbk, [self.records[record_id]])
+
     def get_region_seqrecord(self, seq, record_id, seqfeatures):
         seqrecord = [SeqRecord(seq, 
                                id=self.records[record_id].id, 
@@ -250,30 +317,75 @@ class Genome:
                                letter_annotations=self.records[record_id].letter_annotations)]
         return seqrecord
 
+    def get_region_sequence(self, left, right, record_id=0):
+        # If right coordinate is outside the sequence then assume that this mean user want the beginning of the circular chromosome
+        #if right >= len(self.sequence(record_id)):
+        #    right %= len(self.sequence(record_id))
+
+        if left >= right:
+            seq_right = self.sequence(record_id)[int(right):len(self.sequence(record_id))]
+            seq_left = self.sequence(record_id)[0:int(left)]
+            seq = seq_right + seq_left
+        else:
+            seq = self.sequence(record_id)[int(left):int(right)]
+
+        if not len(seq):
+            raise ValueError(f"Extracted sequence is empty using coordinates {left}:{right} on record_id {record_id} ({self.records[record_id].id}, {len(self.sequence(record_id))}).")
+
+        return seq
+
+    def reverse_complement_record(self, record_id=0):
+        record_id = self.translate_records_name(record_id)
+
+        new_seq = self.get_region_sequence(0, len(self.sequence(record_id)), record_id=record_id)
+        new_seq = new_seq.reverse_complement()
+        seqfeatures = [self.source(record_id)]
+        seqfeatures += [feat.reverse_complement().seqfeature for feat in self.iterfeatures(record_id)]
+        
+        return self.get_region_seqrecord(new_seq, record_id, seqfeatures)
+
+    def convert_coordinate_on_circular_genome(self, position, record_id=0):
+        record_id = self.translate_records_name(record_id)
+
+        if position < 0 or position >= len(self.sequence(record_id)):
+            return position % len(self.sequence(record_id))
+
     def access_region(self, left, right, record_id=0, strict=True, reverse=False, feat_type=None):
         record_id = self.translate_records_name(record_id)
-        left, right, selected_features = self.select_features(left, right, record_id, strict, feat_type)
 
+        if reverse:
+            new_record_id = 0
+            new_genome = Genome(self.gbk, self.reverse_complement_record(record_id))
+            new_left = len(new_genome.sequence(new_record_id)) - right
+            new_right = len(new_genome.sequence(new_record_id)) - left
+            reverse = False
+            return new_genome.access_region(new_left, new_right, new_record_id, strict, reverse, feat_type)
+
+        # Sequence
+        new_seq = self.get_region_sequence(int(left), int(right), record_id=record_id)
+        
+        # Features
         # Add source feature
         seqfeatures = [self.source(record_id)]
-        if reverse:
-            new_seq = self.sequence(record_id)[int(left):int(right)].reverse_complement()
-            seqfeatures += [feat.lshift(left).reverse_complement(len(new_seq)).seqfeature for feat in selected_features]
-        else:
-            new_seq = self.sequence(record_id)[int(left):int(right)]
-            seqfeatures += [feat.lshift(left).seqfeature for feat in selected_features]
+        seqfeatures += self.access_seqfeature(left, right, record_id, strict, feat_type)
+
+        # Reverse
+        #if reverse:
+        #    new_seq = new_seq.reverse_complement()
+        #    seqfeatures += [feat.reverse_complement(len(new_seq)).seqfeature for feat in selected_features]
+        #else:
+        #    seqfeatures += [feat.seqfeature for feat in selected_features]
 
         return self.get_region_seqrecord(new_seq, record_id, seqfeatures)
 
-    def extract_region(self, left, right, record_id=0, strict=True, reverse=False):
-        seqrecord = self.access_region(left, right, record_id, strict, reverse)
+    def extract_region(self, left, right, record_id=0, strict=True, reverse=False, feat_type=None):
+        seqrecord = self.access_region(left, right, record_id, strict, reverse, feat_type)
         return Genome(self.gbk, seqrecord, left, right)
 
     def __getitem__(self, key):
-        if not self:
-            return None
-
         if isinstance(key, str): # Single locustag
+            if not self:
+                raise ValueError(f"Genome index is empty. {self.index}")
             return self.access_locustag(key)
         elif isinstance(key, slice) and isinstance(key.start, str) and isinstance(key.stop, str): # From locustag to locustag
             feat1 = self.access_locustag(key.start)
@@ -306,8 +418,8 @@ class Genome:
         else:
             raise KeyError(key)
 
-        if start > end:
-            start, end = end, stop
+        #if start > end:
+        #    start, end = end, stop
         seqrecord = self.access_region(start, end, record_id)
 
         return Genome(self.gbk, seqrecord, start, end)
@@ -360,21 +472,22 @@ class Genome:
         if position:
             start = position
 
-        seg_right = self.extract_region(start, len(self.sequence(record_id)), record_id=record_id, reverse=reverse)
-        seg_left = self.extract_region(0, start, record_id=record_id, reverse=reverse)
+        #seg_right = self.extract_region(start, len(self.sequence(record_id)), record_id=record_id, reverse=reverse)
+        #seg_left = self.extract_region(0, start, record_id=record_id, reverse=reverse)
+        new_genome = self.extract_region(start, start, record_id=record_id, reverse=reverse)
 
         #Debug
-        if debug:
-            seg_left.format("Debug_left.gbk", "genbank")
-            print("Left segment features:")
-            for feature in seg_left.iterfeatures():
-                print(feature)
-            seg_right.format("Debug_right.gbk", "genbank")
-            print("Right segment features:")
-            for feature in seg_right.iterfeatures():
-                print(feature)
+        #if debug:
+        #    seg_left.format("Debug_left.gbk", "genbank")
+        #    print("Left segment features:")
+        #    for feature in seg_left.iterfeatures():
+        #        print(feature)
+        #    seg_right.format("Debug_right.gbk", "genbank")
+        #    print("Right segment features:")
+        #    for feature in seg_right.iterfeatures():
+        #        print(feature)
 
-        new_genome = seg_right + seg_left
+        #new_genome = seg_right + seg_left
         return new_genome
 
     #####  Drawing  #####
@@ -432,16 +545,21 @@ class Genome:
         plt.savefig(output, dpi=300)
 
     # Generic function
-    def format(self, output, fmt):
-        count = SeqIO.write(self.records, output, fmt)
+    def format(self, output, fmt, record_id=None):
+        if record_id:
+            record_id = self.translate_records_name(record_id)
+            records = self.records[record_id]
+        else:
+            records = self.records
+        count = SeqIO.write(records, output, fmt)
         return output
 
     # Predefined format
-    def to_fasta(self, output):
-        return self.format(output, "fasta")
+    def to_fasta(self, output, record_id=None):
+        return self.format(output, "fasta", record_id=record_id)
 
-    def to_genbank(self, output):
-        return self.format(output, "genbank")
+    def to_genbank(self, output, record_id=None):
+        return self.format(output, "genbank", record_id=record_id)
 
     def check_fasta(self, output=""):
         if not output:
@@ -502,7 +620,7 @@ class Genome:
         
     @property
     def species_code(self):
-            return self.species.split()[-1][:4]
+        return self.species.split()[-1][:4]
 
     def calc_GC_content(self):
         # 6 --> arbitrary cutoff (plasmid in genbank of complete genome)
