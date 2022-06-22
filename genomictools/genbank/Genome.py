@@ -198,6 +198,7 @@ class Genome:
         return [feat for feat in sorted(features, key=lambda f: f.start)]
 
     def select_features(self, left, right, record_id=0, strict=True, feat_type=None):
+        left, right = int(left), int(right)
         selected_features = []
         # TODO: check if feature in selected_features
         # TODO: features with a CompoundLocation are always selected
@@ -241,6 +242,8 @@ class Genome:
         return left, right, selected_features
 
     def access_seqfeature(self, left, right, record_id=0, strict=True, feat_type=None):
+        left, right = int(left), int(right)
+
         if left >= right:
             right, _, selected_features_right = self.select_features(right, len(self.sequence(record_id)), record_id, strict, feat_type)
             # Substract left coordinate as seqfeatures start at 0.
@@ -318,6 +321,8 @@ class Genome:
         return seqrecord
 
     def get_region_sequence(self, left, right, record_id=0):
+        left, right = int(left), int(right)
+
         # If right coordinate is outside the sequence then assume that this mean user want the beginning of the circular chromosome
         #if right >= len(self.sequence(record_id)):
         #    right %= len(self.sequence(record_id))
@@ -351,6 +356,7 @@ class Genome:
             return position % len(self.sequence(record_id))
 
     def access_region(self, left, right, record_id=0, strict=True, reverse=False, feat_type=None):
+        left, right = int(left), int(right)
         record_id = self.translate_records_name(record_id)
 
         if reverse:

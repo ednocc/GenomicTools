@@ -1,5 +1,6 @@
 import sys
 import os
+import argparse
 import itertools
 import shutil
 import subprocess
@@ -37,14 +38,15 @@ class Draw:
         for n, region in enumerate(self.genome_region, 1):
             track = self.diagram.new_track(n, name=region.gbk, scale=0)
             track_feature_set = track.new_set()
-            print(region.features())
-            for locustag, feature in region:
+            features = region.select_features(0, len(region.sequence()))[-1]
+            print(features)
+            for feature in features:
                 print(feature.locustag, feature.gene, feature.start, feature.end, sep="\t")
                 feat_sigil = "ARROW"
                 feat_arrowshaft = 0.6
                 feat_border_color = colors.black
                 feat_color = colors.white
-                track_feature_set.add_feature(feature.feature, sigil=feat_sigil, color=feat_color, border=feat_border_color, arrowshaft_height=feat_arrowshaft)
+                track_feature_set.add_feature(feature.seqfeature, sigil=feat_sigil, color=feat_color, border=feat_border_color, arrowshaft_height=feat_arrowshaft)
             self.track[region.records[0].id] = [region, track, track_feature_set]
 
 
@@ -110,13 +112,35 @@ class Draw:
 
 
 if __name__ == '__main__':
-    from Genome import Genome
+    def parse_argument():
+        parser = argparse.ArgumentParser()
+        parser.add_argument("-1", "--sequence1", required=True, help="")
+        parser.add_argument("--seqstart1", default=0, help="")
+        parser.add_argument("--seqstop1", default=None, help="")
+        parser.add_argument("--reverse1", action="store_true", help="")
 
-    h37Rv_genome = Genome(sys.argv[1])
-    g20x_contigs = Genome(sys.argv[2])
+        parser.add_argument("-2", "--sequence2", required=True, help="")
+        parser.add_argument("--seqstart2", default=0, help="")
+        parser.add_argument("--seqstop2", default=None, help="")
+        parser.add_argument("--reverse2", action="store_true", help="")
 
-    katG_h37rv = h37Rv_genome.extract_region(2151422, 2162770)
-    katG_g20x = g20x_contigs.extract_region(1110, 8800, reverse=True)
+        parser.add_argument("-p", "--prefix", required=True, help="")
 
-    drawing = Draw("katG region", katG_h37rv, katG_g20x)
-    drawing.draw("katG_region", "png")
+        parsed_args = parser.parse_args()
+        return parsed_args
+
+    from genomictools.genbank.Genome import Genome
+
+    args = parse_argument()
+
+    sequence1 = Genome(args.sequence1)
+    sequence2 = Genome(args.sequence2)
+
+    #katG_h37rv = h37Rv_genome.extract_region(2151422, 2162770)
+    #katG_g20x = g20x_contigs.extract_region(1110, 8800, reverse=True)
+
+    sequence1_region = sequence1.extract_region(args.seqstart1, args.seqstop1, reverse=args.reverse1)
+    sequence2_region = sequence2.extract_region(args.seqstart2, args.seqstop2, reverse=args.reverse2)
+
+    drawing = Draw("Test", sequence1_region, sequence2_region)
+    drawing.draw(args.prefix, "png")
