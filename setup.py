@@ -19,6 +19,7 @@ setup(
                       'pyvcf',
                       'pysam',
                       'seaborn',
+                      'reportlab',
                       'pandas',
                       'numpy',
                       'pytest',
@@ -28,6 +29,8 @@ setup(
 )
 
 util_dir = Path(__file__).resolve().parent / "genomictools/utils/"
+
+# Edit for your configuration
 usr_bin_dir = Path.home() / "bin"
 
 if usr_bin_dir.exists():
