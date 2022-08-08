@@ -1,18 +1,18 @@
 import os
 import re
 
-from pathlib import Path
-from collections import OrderedDict
+#from pathlib import Path
+#from collections import OrderedDict
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
 from Bio.SeqUtils import GC
 
 from reportlab.lib import colors
-from reportlab.lib.units import cm
+#from reportlab.lib.units import cm
 
-from Bio.Graphics import GenomeDiagram
-from Bio.Graphics.GenomeDiagram import CrossLink
+#from Bio.Graphics import GenomeDiagram
+#from Bio.Graphics.GenomeDiagram import CrossLink
 
 #pip install dna_features_viewer
 from dna_features_viewer import GraphicFeature, GraphicRecord
@@ -35,7 +35,7 @@ from multiprocessing import Pool
 
 import itertools
 import concurrent.futures
-from concurrent.futures import ProcessPoolExecutor, as_completed
+#from concurrent.futures import ProcessPoolExecutor, as_completed
 
 FORWARD_STRAND = 1
 REVERSE_STRAND = -1
@@ -72,7 +72,7 @@ class GenomeIterator:
 
 
 class Genome:
-    # Prevents the direct use of this class 
+    # Prevents the direct use of this class
     #def __new__(cls):
     #    if BaseGenome.__name__ == cls.__name__:
     #        raise ValueError("You try to create an instance of the BaseGenome class which is not recommanded. Use the Genome class instead.")
@@ -133,7 +133,7 @@ class Genome:
         seq = self.sequence() + other.sequence()
 
         # Extract seqfeature from self and other
-        seqfeatures = self.features() 
+        seqfeatures = self.features()
         _, _, other_selected_features = other.select_features(0, len(other.sequence()), 0)
         seqfeatures += [(feature + len(self.sequence())).seqfeature for feature in other_selected_features]
 
@@ -209,7 +209,7 @@ class Genome:
                 selected_features.append(feature)
             else:
                 continue
-                
+
             #if l in feature and r in feature: # For region smaller than a feature
             #    selected_features.append(feature)
             #if feature.start > feature.end:
@@ -346,7 +346,7 @@ class Genome:
         new_seq = new_seq.reverse_complement()
         seqfeatures = [self.source(record_id)]
         seqfeatures += [feat.reverse_complement().seqfeature for feat in self.iterfeatures(record_id)]
-        
+
         return self.get_region_seqrecord(new_seq, record_id, seqfeatures)
 
     def convert_coordinate_on_circular_genome(self, position, record_id=0):
@@ -354,6 +354,8 @@ class Genome:
 
         if position < 0 or position >= len(self.sequence(record_id)):
             return position % len(self.sequence(record_id))
+        else:
+            return position
 
     def access_region(self, left, right, record_id=0, strict=True, reverse=False, feat_type=None):
         left, right = int(left), int(right)
@@ -362,6 +364,7 @@ class Genome:
         if reverse:
             new_record_id = 0
             new_genome = Genome(self.gbk, self.reverse_complement_record(record_id))
+            # TODO: not working
             new_left = len(new_genome.sequence(new_record_id)) - right
             new_right = len(new_genome.sequence(new_record_id)) - left
             reverse = False
@@ -369,7 +372,7 @@ class Genome:
 
         # Sequence
         new_seq = self.get_region_sequence(int(left), int(right), record_id=record_id)
-        
+
         # Features
         # Add source feature
         seqfeatures = [self.source(record_id)]
@@ -393,7 +396,7 @@ class Genome:
             if not self:
                 raise ValueError(f"Genome index is empty. {self.index}")
             return self.access_locustag(key)
-        elif isinstance(key, slice) and isinstance(key.start, str) and isinstance(key.stop, str): # From locustag to locustag
+        elif isinstance(key, slice) and isinstance(key.start, str) and isinstance(key.stop, str): # From locustag to locustag (l1:l2)
             feat1 = self.access_locustag(key.start)
             if not feat1:
                 raise KeyError(f"{key.start} not in genome.")
@@ -406,13 +409,13 @@ class Genome:
                 raise KeyError(f"Passed keys are not on the same sequence. Start: {feat1.locustag} {feat1.record_id}. Stop : {feat2.locustag} {feat2.record_id}")
             else:
                 record_id = feat1.record_id
-            
+
             start, end = feat1.start, feat2.end
         elif isinstance(key, tuple):
-            if isinstance(key[1], int):
+            if isinstance(key[1], int): # (record_id, position)
                 record_id, position = key
                 return self.access_position(position, record_id)
-            elif isinstance(key[1], slice): # From position to position
+            elif isinstance(key[1], slice): # From position to position (record_id, p1:p2)
                 # No need to check for a particular type as translate_records_name is called in access_region
                 record_id = key[0]
                 start = key[1].start
@@ -429,14 +432,14 @@ class Genome:
         seqrecord = self.access_region(start, end, record_id)
 
         return Genome(self.gbk, seqrecord, start, end)
-            
+
     ######  Search  #######
 
     def search_gene(self, gene):
         for locustag, feature in self:
             if gene == feature.gene:
                 return feature
-    
+
     def search_product(self, product, regex=False):
         for locustag, feature in self:
             if regex:
@@ -471,10 +474,19 @@ class Genome:
         # Find the locustag or gene_name
         if gene_name:
             starting_feature = self.search_gene(gene_name)
-            start = starting_feature.start
+            if starting_feature:
+                if reverse:
+                    start = starting_feature.end
+                else:
+                    start = starting_feature.start
+            else:
+                raise ValueError(f"Gene {gene_name} not found. Can not change origin.")
         if locustag:
             starting_feature = self[locustag]
-            start = starting_feature.start
+            if reverse:
+                start = starting_feature.end
+            else:
+                start = starting_feature.start
         if position:
             start = position
 
@@ -575,7 +587,7 @@ class Genome:
 
         if not os.path.exists(self.fasta):
             self.to_fasta(self.fasta)
-        
+
         return self.fasta
 
     #####  Metadata  #####
@@ -598,8 +610,8 @@ class Genome:
 
     @property
     def get_sequences_id(self):
-        return [record.id for record in self.records] 
-    
+        return [record.id for record in self.records]
+
     @property
     def species(self):
         species = self.source().qualifiers.get("organism")[0]
@@ -607,7 +619,7 @@ class Genome:
             return " ".join(species.split()[:4])
         else:
             return " ".join(species.split()[:2])
-    
+
     @property
     def strain(self):
         name_fields = ["strain", "isolate"]
@@ -615,15 +627,17 @@ class Genome:
             strain_name = self.source().qualifiers.get(field, None)
             if strain_name:
                 return strain_name[0].replace(" ", self.strain_sep).replace("/", self.strain_sep)
-        
-        raise ValueError("No field name found.")
+
+        # If no strain name in source then return first record id
+        return self.get_sequences_id[0]
+        #raise ValueError("No field name found.")
         #return self.source.qualifiers.get("strain")[0].replace(" ", self.strain_sep).replace("/", self.strain_sep)
-        
+
     @property
     def short_strain(self):
         #return self.source.qualifiers.get("strain")[0].replace(" ", "").replace("/", "").replace("-", "").replace("_", "")
         return self.strain.replace("-", "").replace("_", "")
-        
+
     @property
     def species_code(self):
         return self.species.split()[-1][:4]

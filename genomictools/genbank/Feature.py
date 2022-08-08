@@ -197,7 +197,7 @@ class Feature:
         return self.__repr__()
 
     def __repr__(self):
-        return f"Feature(locustag={self.locustag}, type={self.type}, start={self.start}, end={self.end}, product={self.product})"
+        return f"Feature(locustag={self.locustag}({'+' if self.strand == 1 else '-'}), type={self.type}, start={self.start}, end={self.end}, product={self.product})"
 
     def __hash__(self):
         return hash(self.locustag + self.type + str(self.seq))
