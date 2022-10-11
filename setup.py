@@ -30,6 +30,7 @@ setup(
         'console_scripts': [
             'change_origin = genomictools.utils.change_origin:main'
             ]
+        }
 )
 
 #util_dir = Path(__file__).resolve().parent / "genomictools/utils/"
