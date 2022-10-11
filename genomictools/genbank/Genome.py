@@ -472,7 +472,7 @@ class Genome:
 
     def change_origin(self, record_id=0, gene_name=None, locustag=None, position=None, reverse=False, debug=False):
         # Find the locustag or gene_name
-        if gene_name:
+        if gene_name is not None:
             starting_feature = self.search_gene(gene_name)
             if starting_feature:
                 if reverse:
@@ -481,13 +481,13 @@ class Genome:
                     start = starting_feature.start
             else:
                 raise ValueError(f"Gene {gene_name} not found. Can not change origin.")
-        if locustag:
+        if locustag is not None:
             starting_feature = self[locustag]
             if reverse:
                 start = starting_feature.end
             else:
                 start = starting_feature.start
-        if position:
+        if position is not None:
             start = position
 
         #seg_right = self.extract_region(start, len(self.sequence(record_id)), record_id=record_id, reverse=reverse)

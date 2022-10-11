@@ -13,7 +13,7 @@ def parse_argument():
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("-g", "--gene", help="Gene name which will serve as the new origin.")
     group.add_argument("-l", "--locustag", help="Locustag which will serve as the new origin.")
-    group.add_argument("-p", "--position", type=int, help="Position which will serve as the new origin.")
+    group.add_argument("-p", "--position", type=int, help="Position in 0-based coordinate which will serve as the new origin.")
 
     parsed_args = parser.parse_args()
     return parsed_args
