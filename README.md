@@ -4,7 +4,8 @@
 ```
 git clone https://github.com/ednocc/GenomicTools.git
 cd GenomicTools
-python3 setup.py install
+python3 setup.py install --user
+change_origin -h
 ```
 
 ## genbank
