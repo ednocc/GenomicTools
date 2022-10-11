@@ -18,7 +18,8 @@ def parse_argument():
     parsed_args = parser.parse_args()
     return parsed_args
 
-if __name__ == '__main__':
+
+def main():
     args = parse_argument()
 
     genome = Genome(args.gbk)
@@ -30,3 +31,7 @@ if __name__ == '__main__':
         new_genome = genome.change_origin(position=args.position, reverse=args.reverse, debug=args.debug)
 
     new_genome.format(args.output, "genbank")
+
+
+if __name__ == '__main__':
+    main()
