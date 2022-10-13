@@ -8,6 +8,13 @@ python3 setup.py install --user
 change_origin -h
 ```
 
+# Mise à jour
+```
+cd GenomicTools
+git pull
+python3 setup.py install --user
+```
+
 ## genbank
 ### Genome
 Class representing a genbank file.
