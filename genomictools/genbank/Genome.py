@@ -474,6 +474,10 @@ class Genome:
         # Find the locustag or gene_name
         if gene_name is not None:
             starting_feature = self.search_gene(gene_name)
+
+            if starting_feature is None:
+                raise TypeError(f"Locustag {locustag} not found in genome {self.path}")
+
             if starting_feature:
                 if reverse:
                     start = starting_feature.end
@@ -483,6 +487,10 @@ class Genome:
                 raise ValueError(f"Gene {gene_name} not found. Can not change origin.")
         if locustag is not None:
             starting_feature = self[locustag]
+
+            if starting_feature is None:
+                raise TypeError(f"Locustag {locustag} not found in file {self.path}.")
+
             if reverse:
                 start = starting_feature.end
             else:
