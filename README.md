@@ -8,7 +8,7 @@ python3 setup.py install --user
 change_origin -h
 ```
 
-# Mise à jour
+# Update
 ```
 cd GenomicTools
 git pull
