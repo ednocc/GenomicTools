@@ -203,12 +203,16 @@ class Genome:
         # TODO: check if feature in selected_features
         # TODO: features with a CompoundLocation are always selected
         for feature in self.iterfeatures(record_id, feat_type):
-            if left < feature.start < right:
-                selected_features.append(feature)
-            elif left < feature.end < right:
-                selected_features.append(feature)
+            if strict:
+                if left <= feature.start <= right and left <= feature.end <= right:
+                    selected_features.append(feature)
             else:
-                continue
+                if left <= feature.start <= right:
+                    selected_features.append(feature)
+                elif left <= feature.end <= right:
+                    selected_features.append(feature)
+                else:
+                    continue
 
             #if l in feature and r in feature: # For region smaller than a feature
             #    selected_features.append(feature)

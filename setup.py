@@ -8,7 +8,7 @@ from setuptools import setup, find_packages
 
 setup(
     name="GenomicTools",
-    version="0.9.0",
+    version="0.9.1",
     packages=find_packages(),
     include_package_data=True,
     author="Cyril Conde",
@@ -28,7 +28,8 @@ setup(
                       'dna_features_viewer'],
     entry_points={
         'console_scripts': [
-            'change_origin = genomictools.utils.change_origin:main'
+            'change_origin = genomictools.utils.change_origin:main',
+            'extract_region = genomictools.utils.extract_region:main'
             ]
         }
 )
