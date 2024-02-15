@@ -6,7 +6,6 @@ import re
 
 from Bio import SeqIO
 from Bio.SeqRecord import SeqRecord
-from Bio.SeqUtils import GC
 
 from reportlab.lib import colors
 #from reportlab.lib.units import cm
@@ -18,7 +17,7 @@ from reportlab.lib import colors
 from dna_features_viewer import GraphicFeature, GraphicRecord
 import matplotlib.pyplot as plt
 
-from genomictools.wrapper import pprint, timer
+from genomictools.wrapper import pprint, timer, GC
 
 #import pickle
 #from GenomicPackage.hashfile import HashFile

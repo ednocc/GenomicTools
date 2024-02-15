@@ -1,4 +1,4 @@
-from Bio.SeqUtils import GC
+from genomictools.wrapper import GC
 
 __all__ = ["Metadata"]
 

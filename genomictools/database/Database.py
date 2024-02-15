@@ -4,7 +4,7 @@ import os
 import sqlite3
 from pathlib import Path
 
-from genomictools.wrapper import timer, pprint
+from genomictools.wrapper import timer, pprint, GC
 from genomictools.genbank.Genome import Genome
 
 __all__ = ["Database"]

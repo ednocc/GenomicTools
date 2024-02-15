@@ -9,6 +9,8 @@ from pprint import PrettyPrinter
 pprint = PrettyPrinter(indent=4).pprint
 del PrettyPrinter
 
+from Bio.SeqUtils import gc_fraction
+
 __all__ = ["pprint", "timer", "blastn", "blastp", "BlastResult", "Alignment", "check"]
 
 class Alignment:
@@ -64,6 +66,13 @@ def blastn(ref_db, query, output, word_size=11, gapopen=5, gapextend=2, perc_ide
     #print(" ".join(["blastn", "-query", query, "-word_size", str(word_size), "-gapopen", str(gapopen), "-gapextend", str(gapextend), "-perc_identity", str(perc_identity), "-evalue", str(evalue), "-dust", dust, "-db", ref_db, "-outfmt", str(outfmt), "-out", output]))
     subprocess.run(["blastn", "-query", query, "-word_size", str(word_size), "-gapopen", str(gapopen), "-gapextend", str(gapextend), "-perc_identity", str(perc_identity), "-evalue", str(evalue), "-dust", dust, "-db", ref_db, "-outfmt", str(outfmt), "-out", output])
     return os.path.realpath(output)
+
+def GC(seq):
+    """
+    Wrapper for the depracated function 'GC' of Biopython.
+    This function was remove from Biopython v1.82.
+    """
+    return gc_fraction(seq) * 100
 
 def timer(func):
 

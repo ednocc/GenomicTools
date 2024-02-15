@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from setuptools import setup, find_packages
 
+#'pyvcf'],
 setup(
     name="GenomicTools",
     version="0.9.1",
@@ -16,7 +17,6 @@ setup(
     url="https://github.com/ednocc/GenomicTools",
     python_requires='>=3.7',
     install_requires=['biopython',
-                      'pyvcf',
                       'pysam',
                       'seaborn',
                       'reportlab',
