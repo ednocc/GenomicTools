@@ -16,7 +16,7 @@ setup(
     author_email="cyril.conde@gmail.com",
     url="https://github.com/ednocc/GenomicTools",
     python_requires='>=3.7',
-    install_requires=['biopython',
+    install_requires=['biopython<=1.81',
                       'pysam',
                       'seaborn',
                       'reportlab',
